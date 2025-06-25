@@ -1,0 +1,22 @@
+{
+  "usuarios": [
+    {
+      "discord_id": "919370866985414677",
+      "twitch_id": "170721291"
+    },
+    {
+      "discord_id": "732105221567676416",
+      "twitch_id": "1325346084"
+    }
+  ],
+  "twitch_auth": {
+    "access_token": "xvldf6l4dp8kf8bwksqtqkmp0d97bs",
+    "refresh_token": "rlfcirmqboht6tg2uxapip4z7p3uljyzvrficcwfj3uv5mh10p",
+    "expires_at": 1750772925468
+  },
+  "channel_auth": {
+    "access_token": "ivfld5nwspufsdm18i3duzu6urjyu1",
+    "refresh_token": "k1yth27vkc98hpdtfyx2l9bs4ww0ezhu3r5cp1qcryr46aea6r",
+    "expires_at": 1750882078050
+  }
+}
