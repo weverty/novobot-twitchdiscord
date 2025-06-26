@@ -44,92 +44,78 @@ router.get('/vincular', (req, res) => {
   const authUrl = `https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${discord_id}`;
   console.log('🔎 URL gerada:', authUrl);
   res.redirect(authUrl);
+
+  
 });
 
+
 router.get('/auth/twitch/callback', async (req, res) => {
-  const { code, state: discordId } = req.query;
+  console.log('🚨 CALLBACK ATIVADA: /auth/twitch/callback');
+  const code = req.query.code;
+  const discordId = req.query.state; // ← capturado da URL gerada no /vincular
 
   if (!code) {
-    return res.status(400).send('❌ Código ausente.');
+    return res.send('❌ Código de autorização ausente.');
   }
 
-  const redirectUri = 'http://localhost:3000/auth/twitch/callback';
-
   try {
-    // 🎟️ Troca o código por token
-    const tokenRes = await axios.post('https://id.twitch.tv/oauth2/token', null, {
+    const { data } = await axios.post('https://id.twitch.tv/oauth2/token', null, {
       params: {
         client_id: process.env.CLIENT_ID,
         client_secret: process.env.CLIENT_SECRET,
         code,
         grant_type: 'authorization_code',
-        redirect_uri: redirectUri
+        redirect_uri: process.env.REDIRECT_URI
       }
     });
 
-    const { access_token, refresh_token, expires_in } = tokenRes.data;
+    const { access_token, refresh_token, scope } = data;
+    const escopos = Array.isArray(scope) ? scope : scope?.split(' ') || [];
 
-    // 👤 Pega dados da conta da Twitch
-    const userRes = await axios.get('https://api.twitch.tv/helix/users', {
+    const valida = await axios.get('https://id.twitch.tv/oauth2/validate', {
       headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Client-ID': process.env.CLIENT_ID
+        Authorization: `OAuth ${access_token}`
       }
     });
 
-    const twitchUser = userRes.data.data[0];
-    const twitchId = twitchUser.id;
+    const { login, user_id } = valida.data;
 
-    // 🚫 Verifica se está banido
-    const banido = await Usuario.findOne({ twitch_id: twitchId, banido: true });
-    if (banido) {
-      return res.status(403).render('banido', { nome: twitchUser.display_name });
-    }
-
-    // 🔗 Cria vínculo se vier Discord ID
-    if (discordId) {
-      const jaExiste = await Usuario.findOne({
-        $or: [
-          { discord_id: discordId },
-          { twitch_id: twitchId }
-        ]
-      });
-
-      if (!jaExiste) {
-        const novoUsuario = new Usuario({
-          discord_id: discordId,
-          twitch_id: twitchId,
-          nome_twitch: twitchUser.display_name
-        });
-        await novoUsuario.save();
-        console.log('✅ Novo vínculo salvo no MongoDB');
-      } else {
-        console.log('ℹ️ Vínculo já existia no MongoDB');
-        await Usuario.findOneAndUpdate(
-          { twitch_id: twitchId },
-          { nome_twitch: twitchUser.display_name }
-        );
-      }
-    }
-
-    // 📦 Salva token se for o dono do canal
-    if (twitchId === process.env.OWNER_TWITCH_ID) {
+    // ✅ Atualiza o modelo Canal se for o canal principal
+    if (user_id === process.env.OWNER_TWITCH_ID) {
       await Canal.findOneAndUpdate(
-        { twitch_id: twitchId },
-        {
-          access_token,
-          refresh_token,
-          expires_at: new Date(Date.now() + expires_in * 1000)
-        },
-        { upsert: true }
+        { twitch_id: user_id },
+        { twitch_id: user_id, access_token, refresh_token },
+        { upsert: true, new: true }
       );
-      console.log('📦 Token do canal salvo no Mongo com sucesso!');
+      console.log('📦 Token do canal principal salvo em Canal');
     }
 
-    res.send(`✅ Vinculado com sucesso como ${twitchUser.display_name}`);
+    // ✅ Atualiza o modelo Usuario
+    const update = {
+      twitch_id: user_id,
+      nome_twitch: login,
+      access_token,
+      refresh_token,
+      escopos
+    };
+
+    // 👾 Se veio com state (discordId), salva também
+    if (discordId) {
+      update.discord_id = discordId;
+      update.nome_discord = null; // você pode atualizar via bot mais tarde
+      console.log(`🔗 Vinculando Discord ID ${discordId} à conta Twitch ${login}`);
+    }
+
+    await Usuario.findOneAndUpdate(
+      { twitch_id: user_id },
+      update,
+      { upsert: true, new: true }
+    );
+
+    res.send('✅ Conta conectada com sucesso!');
   } catch (err) {
-    console.error('❌ Erro ao vincular:', err.response?.data || err.message);
-    res.status(500).send('Erro ao vincular Twitch e Discord.');
+    console.error('❌ Erro no callback da Twitch:', err.response?.data || err.message);
+    res.send('❌ Erro ao processar o login com a Twitch.');
   }
 });
 
@@ -264,7 +250,6 @@ router.get('/remover/:discordId', protegerPainel, async (req, res) => {
 });
 
 
-
 router.post('/banir/:id', protegerPainel, async (req, res) => {
   try {
     const userId = req.params.id;
@@ -317,7 +302,6 @@ router.post('/banir/:id', protegerPainel, async (req, res) => {
     res.status(500).send('Erro ao banir usuário.');
   }
 });
-
 
 
 router.post('/desbanir/:id', protegerPainel, async (req, res) => {
@@ -390,6 +374,7 @@ router.get('/remover/:id', protegerPainel, async (req, res) => {
     res.status(404).send('Usuário não encontrado.');
   }
 });
+
 
 router.get('/loja', async (req, res) => {
   const itens = [
@@ -497,6 +482,177 @@ router.get('/verificar-token', async (req, res) => {
     res.status(401).send('❌ Token inválido ou expirado');
   }
 });
+
+
+router.get('/perfil', async (req, res) => {
+  const discordId = req.query.discord_id;
+
+  if (!discordId) {
+    return res.status(400).send('❌ Discord ID ausente.');
+  }
+
+  const usuario = await Usuario.findOne({ discord_id: discordId });
+
+  if (!usuario) {
+    return res.status(404).send('❌ Usuário não encontrado.');
+  }
+
+  const avatarURL = `https://cdn.discordapp.com/avatars/${discordId}/${usuario.avatar_hash}.webp`;
+
+  res.send(`
+    <style>/* (CSS que te mandei antes aqui!) */</style>
+    <div class="perfil-container">
+      <div class="menu-lateral">
+        <h2>🎮 Menu</h2>
+        <ul>
+          <li><a href="/diaria?discord_id=${discordId}">🎁 Recompensa Diária</a></li>
+          <li><a href="/gifs">📂 GIFs de Ban/Mute</a></li>
+          <li><a href="/config">⚙️ Configurações</a></li>
+          <li><a href="/premium">💎 Chaves Premium</a></li>
+          <li><a href="/historico">🧾 Histórico de Compras</a></li>
+        </ul>
+      </div>
+
+      <div class="perfil-detalhes">
+        <div class="usuario-header">
+          <img src="${avatarURL}" alt="Avatar do usuário">
+          <div class="info">
+            <strong>@${usuario.nome_twitch || 'sem-nome'}</strong><br>
+            <small>ID: ${discordId}</small>
+          </div>
+        </div>
+
+        <div class="metricas">
+          <div class="item">
+            <h3>Pontos</h3>
+            <span>${usuario.pontos || 0}</span>
+          </div>
+          <div class="item">
+            <h3>Tempo assistido</h3>
+            <span>${usuario.tempo_assistido || 0}h</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+});
+
+
+router.get('/perfil/visual', async (req, res) => {
+  const discordId = req.query.discord_id;
+  if (!discordId) return res.status(400).send('❌ Discord ID ausente.');
+
+  const usuario = await Usuario.findOne({ discord_id: discordId });
+  if (!usuario) return res.status(404).send('❌ Usuário não encontrado.');
+
+  const avatarURL = `https://cdn.discordapp.com/avatars/${discordId}/${usuario.avatar_hash || '0'}.webp`;
+  const isOwner = usuario.twitch_id === process.env.OWNER_TWITCH_ID;
+
+  const status = isOwner
+    ? 'owner'
+    : usuario.subscriber
+    ? 'subscriber'
+    : usuario.moderador
+    ? 'moderador'
+    : usuario.vip
+    ? 'vip'
+    : 'viewer';
+
+  const statusCor = isOwner
+    ? '#22c55e' // verde
+    : status === 'vip'
+    ? '#facc15'
+    : status === 'moderador'
+    ? '#3b82f6'
+    : status === 'subscriber'
+    ? '#a855f7'
+    : '#9ca3af';
+
+  res.send(`
+    <style>
+      body {
+        margin: 0;
+        background: #0e0e10;
+        font-family: 'Segoe UI', sans-serif;
+      }
+
+      .painel-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
+
+      .perfil-card {
+        background: #1c1c1f;
+        padding: 2rem;
+        border-radius: 1rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5rem;
+        box-shadow: 0 0 20px #111;
+        width: 330px;
+      }
+
+      .avatar {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background: url('${avatarURL}') center/cover no-repeat;
+        border: 3px solid #ff416c;
+      }
+
+      .info {
+        background: #2b2b2f;
+        padding: 1rem;
+        border-radius: 1rem;
+        width: 100%;
+        color: #ccc;
+      }
+
+      .info div {
+        margin-bottom: 0.6rem;
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.95rem;
+        border-bottom: 1px solid #333;
+        padding-bottom: 0.4rem;
+      }
+
+      .info div:last-child {
+        border: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+      }
+
+      .label {
+        color: #777;
+      }
+
+      .valor {
+        font-weight: bold;
+      }
+    </style>
+
+    <div class="painel-container">
+      <div class="perfil-card">
+        <div class="avatar"></div>
+
+        <div class="info">
+          <div><span class="label">Twitch:</span> <span class="valor">${usuario.nome_twitch || '-'}</span></div>
+          <div><span class="label">ID Twitch:</span> <span class="valor">${usuario.twitch_id || '-'}</span></div>
+          <div><span class="label">Pontos:</span> <span class="valor">${usuario.pontos || 0}</span></div>
+          <div><span class="label">Tempo assistido:</span> <span class="valor">${usuario.tempo_assistido || 0}h</span></div>
+          <div><span class="label">Status:</span> <span class="valor" style="color: ${statusCor}">${status}</span></div>
+          <div><span class="label">Discord:</span> <span class="valor">${usuario.nome_discord || 'não vinculado'}</span></div>
+          <div><span class="label">ID Discord:</span> <span class="valor">${usuario.discord_id || '-'}</span></div>
+        </div>
+      </div>
+    </div>
+  `);
+});
+
 
 
 

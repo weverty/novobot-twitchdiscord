@@ -5,7 +5,6 @@ import fetch from 'node-fetch';
 import session from 'express-session';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import authRoutes from './auth.mjs';
 import { Client, GatewayIntentBits } from 'discord.js';
 import { renovarTokenTwitch } from './twitchService.js';
 import Usuario from './models/Usuario.js'; // IMPORTANTE
@@ -13,6 +12,7 @@ import Resg from './models/Resg.js'; // use o nome correto do seu arquivo/modelo
 import Reward from './models/Reward.js'; // se estiver usando recompensas fixas, pode pular
 import axios from 'axios';
 import Canal from './models/Canal.js';
+import authRoutes from './auth.mjs'; // 👈 aqui vem suas rotas[]
 
 dotenv.config();
 
@@ -45,6 +45,7 @@ async function main() {
 
   app.set('view engine', 'ejs');
   app.set('views', './views');
+  app.use(authRoutes);
 
   // 🌐 Home
   app.get('/', (req, res) => {
@@ -211,7 +212,6 @@ app.get('/auth/twitch/callback', async (req, res) => {
 
 
   // Outras rotas
-  app.use('/', authRoutes);
   app.set('discordClient', client);
 
   app.listen(3000, () => {

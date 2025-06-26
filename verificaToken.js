@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
 import Canal from './models/Canal.js';
+import Usuario from './models/Usuario.js'; // ✅ Adicionado aqui!
 
 dotenv.config();
 
@@ -21,7 +22,7 @@ async function verificarToken() {
 
     const access_token = canal.access_token;
 
-    // 🧪 Faz requisição para validar o token
+    // 🧪 Faz requisição para validar o token na Twitch
     const response = await fetch('https://id.twitch.tv/oauth2/validate', {
       headers: {
         'Authorization': `OAuth ${access_token}`
@@ -33,10 +34,19 @@ async function verificarToken() {
     if (data.status === 401 || data.error) {
       console.error('❌ Token inválido:', data);
     } else {
-      console.log('✅ Token válido!');
+      console.log('✅ Token válido com a Twitch!');
       console.log('login:', data.login);
-      console.log('escopos:', data.scope);
+      console.log('escopos (via Twitch):', data.scope);
       console.log('client_id:', data.client_id);
+    }
+
+    // 🔎 Busca os escopos salvos no banco
+    const usuario = await Usuario.findOne({ nome_twitch: 'weverty__17' });
+
+    if (usuario) {
+      console.log('📦 Escopos salvos no Mongo:', usuario.escopos);
+    } else {
+      console.log('⚠️ Usuário não encontrado no Mongo.');
     }
 
     mongoose.disconnect();
