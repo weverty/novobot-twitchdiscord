@@ -160,8 +160,16 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
 if (interaction.commandName === 'vincular') {
-  const discordId = interaction.user.id;
-  const nomeDiscord = `${interaction.user.username}#${interaction.user.discriminator}`;
+const discordId = interaction.user.id;
+const nomeDiscord = interaction.user.globalName || interaction.user.username;
+
+const link = `http://localhost:3000/auth/twitch/login?discord_id=${discordId}&nome_discord=${encodeURIComponent(nomeDiscord)}`;
+  console.log('🔗 Link gerado:', link); // 🔍 VERIFIQUE se vem certo
+
+    return interaction.reply({
+    content: `🔗 Clique aqui para vincular sua conta da Twitch:\n[👉 Vincular Twitch](${link})`,
+    ephemeral: true
+  });
 
   const usuario = await Usuario.findOne({ discord_id: discordId });
 
@@ -183,7 +191,6 @@ if (interaction.commandName === 'vincular') {
     console.error('Erro ao enviar nome_discord:', err.message);
   }
 
-  const link = `http://localhost:3000/auth/twitch/login?discord_id=${discordId}&nome_discord=${encodeURIComponent(nomeDiscord)}`;
 
   await interaction.reply({
     content: `🔗 Clique aqui para vincular sua conta da Twitch:\n${link}`,

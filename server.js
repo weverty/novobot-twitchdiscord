@@ -73,12 +73,13 @@ app.get('/', (req, res) => {
     if (!usuario) return res.redirect('/');
 
     res.render('perfil', {
-      twitchUser: usuario.nome_twitch,
-      twitchId: usuario.twitch_id,
-      pontos: usuario.pontos,
-      email: usuario.email || 'Não disponível',
-      criadoEm: usuario.createdAt?.toLocaleDateString('pt-BR') || 'Desconhecida'
-    });
+  usuario,
+  twitchUser: req.session.twitchUser,
+  twitchId: usuario.twitch_id,
+  pontos: usuario.pontos,
+  email: usuario.email,
+  criadoEm: formatarData(usuario.createdAt)
+});
   });
 
   // 🎁 Resgate
