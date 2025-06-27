@@ -48,11 +48,10 @@ async function main() {
   app.use(authRoutes);
 
   // 🌐 Página inicial
-  app.get('/', (req, res) => {
-    res.render('index', {
-      twitchUser: req.session.twitchUser
-    });
-  });
+app.get('/', (req, res) => {
+  res.render('index', { twitchUser: req.session.twitchUser });;// <- Corrigido aqui
+});
+
 
   // 🛒 Loja
   app.get('/loja', async (req, res) => {
@@ -69,10 +68,7 @@ async function main() {
 
   // 👤 Perfil
   app.get('/perfil', async (req, res) => {
-    if (!req.session.userId) {
-      return res.redirect('/');
-    }
-
+    if (!req.session.userId) return res.redirect('/');
     const usuario = await Usuario.findById(req.session.userId);
     if (!usuario) return res.redirect('/');
 
@@ -85,14 +81,13 @@ async function main() {
     });
   });
 
-  // 🎁 Resgatar recompensa
+  // 🎁 Resgate
   app.post('/resgatar', async (req, res) => {
     const { item, custo } = req.body;
     if (!req.session.userId) return res.status(401).json({ erro: 'Não autenticado' });
 
     const usuario = await Usuario.findById(req.session.userId);
     if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado' });
-
     if (usuario.pontos < custo) {
       return res.status(400).json({ erro: 'Pontos insuficientes' });
     }
@@ -108,16 +103,15 @@ async function main() {
     res.json({ sucesso: true, novaPontuacao: usuario.pontos });
   });
 
-  // 🔗 Vincular com a Twitch (atalho)
+  // 🔗 Início da autenticação Twitch
   app.get('/vincular', (req, res) => {
     const twitchURL = `https://id.twitch.tv/oauth2/authorize?client_id=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}&response_type=code&scope=user:read:email`;
     res.redirect(twitchURL);
   });
 
-  // 🎮 Callback do login com Twitch
+  // 🎮 Callback Twitch
   app.get('/auth/twitch/callback', async (req, res) => {
-    console.log('🚦 Entrou no callback da Twitch!');
-
+    console.log('🚦 Callback da Twitch');
     const code = req.query.code;
     if (!code) return res.status(400).send('❌ Código de autorização ausente.');
 
@@ -165,7 +159,7 @@ async function main() {
           },
           { upsert: true }
         );
-        console.log('📦 Token do canal salvo com sucesso!');
+        console.log('📦 Token do canal salvo');
       }
 
       let usuario = await Usuario.findOne({ twitch_id: twitchId });
@@ -180,6 +174,7 @@ async function main() {
         await usuario.save();
       }
 
+      // 🔒 Sessão correta salva aqui
       req.session.twitchUser = usuario.nome_twitch;
       req.session.userId = usuario._id;
 

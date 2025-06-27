@@ -183,7 +183,8 @@ if (interaction.commandName === 'vincular') {
     console.error('Erro ao enviar nome_discord:', err.message);
   }
 
-  const link = `http://localhost:3000/vincular?discord_id=${discordId}`;
+  const link = `http://localhost:3000/auth/twitch/login?discord_id=${discordId}&nome_discord=${encodeURIComponent(nomeDiscord)}`;
+
   await interaction.reply({
     content: `🔗 Clique aqui para vincular sua conta da Twitch:\n${link}`,
     ephemeral: true

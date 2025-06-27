@@ -7,6 +7,11 @@ import Canal from './models/Canal.js';
 import auth from 'basic-auth';
 import { EmbedBuilder } from 'discord.js'; // ⬅️ no topo do arquivo (caso ainda não tenha)
 import Resgate from './models/Resgate.js';
+
+const client_id = process.env.CLIENT_ID;
+const client_secret = process.env.CLIENT_SECRET;
+const redirect_uri = process.env.REDIRECT_URI;
+
 dotenv.config();
 const router = express.Router();
 
@@ -44,91 +49,116 @@ router.get('/vincular', (req, res) => {
 });
 
 
+// 🎮 Callback do login Twitch
 router.get('/auth/twitch/callback', async (req, res) => {
   const code = req.query.code;
-  const discordId = req.query.state; // capturado da URL gerada no /vincular
 
-  if (!code) {
-    return res.send('❌ Código de autorização ausente.');
-  }
+  if (!code) return res.status(400).send('❌ Código de autorização ausente.');
 
   try {
-    // 🔁 Troca o código por um access token
-    const { data } = await axios.post('https://id.twitch.tv/oauth2/token', null, {
-      params: {
+    const tokenResponse = await fetch('https://id.twitch.tv/oauth2/token', {
+      method: 'POST',
+      body: new URLSearchParams({
         client_id: process.env.CLIENT_ID,
         client_secret: process.env.CLIENT_SECRET,
         code,
         grant_type: 'authorization_code',
         redirect_uri: process.env.REDIRECT_URI
-      }
+      }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    const { access_token, refresh_token, scope } = data;
-    const escopos = Array.isArray(scope) ? scope : scope?.split(' ') || [];
+    const tokenData = await tokenResponse.json();
+    const { access_token, refresh_token, expires_in } = tokenData;
 
-    // 👤 Valida o token e recupera informações do usuário
-    const valida = await axios.get('https://id.twitch.tv/oauth2/validate', {
+    if (!access_token) {
+      console.error('❌ Erro ao obter token:', tokenData);
+      return res.status(400).send('Erro ao obter token de acesso da Twitch.');
+    }
+
+    // 🔎 Pega dados da Twitch
+    const userRes = await axios.get('https://api.twitch.tv/helix/users', {
       headers: {
-        Authorization: `OAuth ${access_token}`
+        'Authorization': `Bearer ${access_token}`,
+        'Client-ID': process.env.CLIENT_ID
       }
     });
 
-    const { login, user_id } = valida.data;
+    const twitchData = userRes.data?.data?.[0];
+    if (!twitchData) return res.status(400).send('❌ Não foi possível obter informações da conta da Twitch.');
 
-    // ✅ Atualiza o modelo Canal se for o canal principal
-    if (user_id === process.env.OWNER_TWITCH_ID) {
+    const twitchId = twitchData.id;
+    const displayName = twitchData.display_name;
+
+    // 🔍 Busca usuário por twitch_id ou discord_id
+
+// 📥 Dados do query
+const discordId = req.query.discord_id;
+const nomeDiscord = req.query.nome_discord;
+
+// 🛡️ Verifica se os parâmetros são válidos
+const validDiscordId = discordId && discordId !== 'undefined';
+const validNomeDiscord = nomeDiscord && nomeDiscord !== 'undefined';
+
+// 🔍 Busca por twitch_id ou discord_id
+let usuario = await Usuario.findOne({
+  $or: [
+    { twitch_id: twitchId },
+    ...(validDiscordId ? [{ discord_id: discordId }] : [])
+  ]
+});
+
+// 🧬 Se não encontrar, cria do zero
+if (!usuario) {
+  usuario = await Usuario.create({
+    twitch_id: twitchId,
+    nome_twitch: displayName,
+    pontos: 500,
+    ...(validDiscordId && { discord_id: discordId }),
+    ...(validNomeDiscord && { nome_discord: nomeDiscord })
+  });
+} else {
+  // ♻️ Atualiza os dados se necessário
+  usuario.twitch_id = twitchId;
+  usuario.nome_twitch = displayName;
+  if (validDiscordId) usuario.discord_id = discordId;
+  if (validNomeDiscord) usuario.nome_discord = nomeDiscord;
+  await usuario.save();
+}
+
+
+    // ♻️ Salva token do canal se for o dono
+    if (twitchId === process.env.OWNER_TWITCH_ID) {
       await Canal.findOneAndUpdate(
-        { twitch_id: user_id },
-        { twitch_id: user_id, access_token, refresh_token },
-        { upsert: true, new: true }
+        { twitch_id: twitchId },
+        {
+          access_token,
+          refresh_token,
+          expires_at: new Date(Date.now() + expires_in * 1000)
+        },
+        { upsert: true }
       );
-      console.log('📦 Token do canal principal salvo em Canal');
     }
 
-    // ✅ Monta objeto de atualização do usuário
-    const update = {
-      twitch_id: user_id,
-      nome_twitch: login,
-      access_token,
-      refresh_token,
-      escopos
-    };
+    // ✅ Salva na sessão
+    req.session.twitchUser = usuario.nome_twitch;
+    req.session.userId = usuario._id;
 
-    // 👾 Se veio com Discord ID (state), vincula ao usuário
-    if (discordId) {
-      const usuarioExistente = await Usuario.findOne({ discord_id: discordId });
-      update.discord_id = discordId;
-
-      if (usuarioExistente && usuarioExistente.nome_discord) {
-        update.nome_discord = usuarioExistente.nome_discord;
-      } else {
-        update.nome_discord = null;
-      }
-
-      console.log(`🔗 Vinculando Discord ID ${discordId} à conta Twitch ${login}`);
-    }
-
-    // 🛠️ Cria ou atualiza o usuário no banco
-    const usuarioAtualizado = await Usuario.findOneAndUpdate(
-      { twitch_id: user_id },
-      update,
-      { upsert: true, new: true }
-    );
-
-    // 💾 Salva informações na sessão
-    req.session.twitchUser = usuarioAtualizado.nome_twitch;
-    req.session.twitchId = usuarioAtualizado.twitch_id;
-    req.session.userId = usuarioAtualizado._id;
-    // ✅ Redireciona de volta à home
     res.redirect('/');
 
   } catch (err) {
-    console.error('❌ Erro no callback da Twitch:', err.response?.data || err.message);
-    res.send('❌ Erro ao processar o login com a Twitch.');
+    console.error('❌ Erro no callback Twitch:', err.response?.data || err.message);
+    res.status(500).send('Erro ao autenticar com a Twitch.');
   }
 });
 
+
+// 🚪 Logout
+router.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
+});
 
 
 
@@ -497,70 +527,14 @@ router.get('/verificar-token', async (req, res) => {
 
 
 router.get('/perfil', async (req, res) => {
-  const discordId = req.query.discord_id;
+  if (!req.session.userId) return res.redirect('/');
 
-  if (!discordId) {
-    return res.status(400).send('❌ Discord ID ausente.');
-  }
-
-  const usuario = await Usuario.findOne({ discord_id: discordId });
-
-  if (!usuario) {
-    return res.status(404).send('❌ Usuário não encontrado.');
-  }
-
-  const avatarURL = `https://cdn.discordapp.com/avatars/${discordId}/${usuario.avatar_hash}.webp`;
-
-  res.send(`
-    <style>/* (CSS que te mandei antes aqui!) */</style>
-    <div class="perfil-container">
-      <div class="menu-lateral">
-        <h2>🎮 Menu</h2>
-        <ul>
-          <li><a href="/diaria?discord_id=${discordId}">🎁 Recompensa Diária</a></li>
-          <li><a href="/gifs">📂 GIFs de Ban/Mute</a></li>
-          <li><a href="/config">⚙️ Configurações</a></li>
-          <li><a href="/premium">💎 Chaves Premium</a></li>
-          <li><a href="/historico">🧾 Histórico de Compras</a></li>
-        </ul>
-      </div>
-
-      <div class="perfil-detalhes">
-        <div class="usuario-header">
-          <img src="${avatarURL}" alt="Avatar do usuário">
-          <div class="info">
-            <strong>@${usuario.nome_twitch || 'sem-nome'}</strong><br>
-            <small>ID: ${discordId}</small>
-          </div>
-        </div>
-
-        <div class="metricas">
-          <div class="item">
-            <h3>Pontos</h3>
-            <span>${usuario.pontos || 0}</span>
-          </div>
-          <div class="item">
-            <h3>Tempo assistido</h3>
-            <span>${usuario.tempo_assistido || 0}h</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  `);
-});
-
-
-router.get('/perfil/visual', async (req, res) => {
-  const discordId = req.query.discord_id;
-  if (!discordId) return res.status(400).send('❌ Discord ID ausente.');
-
-  const usuario = await Usuario.findOne({ discord_id: discordId });
+  const usuario = await Usuario.findById(req.session.userId);
   if (!usuario) return res.status(404).send('❌ Usuário não encontrado.');
 
-  const avatarURL = `https://cdn.discordapp.com/avatars/${discordId}/${usuario.avatar_hash || '0'}.webp`;
-  const isOwner = usuario.twitch_id === process.env.OWNER_TWITCH_ID;
+  const avatarURL = `https://static-cdn.jtvnw.net/jtv_user_pictures/${usuario.twitch_id}-profile_image-300x300.png`;
 
-  const status = isOwner
+  const status = usuario.twitch_id === process.env.OWNER_TWITCH_ID
     ? 'owner'
     : usuario.subscriber
     ? 'subscriber'
@@ -570,15 +544,16 @@ router.get('/perfil/visual', async (req, res) => {
     ? 'vip'
     : 'viewer';
 
-  const statusCor = isOwner
-    ? '#22c55e' // verde
-    : status === 'vip'
-    ? '#facc15'
-    : status === 'moderador'
-    ? '#3b82f6'
-    : status === 'subscriber'
-    ? '#a855f7'
-    : '#9ca3af';
+  const statusCor = {
+    owner: '#22c55e',
+    subscriber: '#a855f7',
+    moderador: '#3b82f6',
+    vip: '#facc15',
+    viewer: '#9ca3af'
+  }[status];
+
+  const nomeDiscord = usuario.nome_discord || 'Não vinculado';
+  const discordId = usuario.discord_id || '-';
 
   res.send(`
     <style>
@@ -653,12 +628,12 @@ router.get('/perfil/visual', async (req, res) => {
 
         <div class="info">
           <div><span class="label">Twitch:</span> <span class="valor">${usuario.nome_twitch || '-'}</span></div>
-          <div><span class="label">ID Twitch:</span> <span class="valor">${usuario.twitch_id || '-'}</span></div>
+          <div><span class="label">ID Twitch:</span> <span class="valor">${usuario.twitch_id}</span></div>
           <div><span class="label">Pontos:</span> <span class="valor">${usuario.pontos || 0}</span></div>
           <div><span class="label">Tempo assistido:</span> <span class="valor">${usuario.tempo_assistido || 0}h</span></div>
           <div><span class="label">Status:</span> <span class="valor" style="color: ${statusCor}">${status}</span></div>
-          <div><span class="label">Discord:</span> <span class="valor">${usuario.nome_discord || 'não vinculado'}</span></div>
-          <div><span class="label">ID Discord:</span> <span class="valor">${usuario.discord_id || '-'}</span></div>
+          <div><span class="label">Discord:</span> <span class="valor">${nomeDiscord}</span></div>
+          <div><span class="label">ID Discord:</span> <span class="valor">${discordId}</span></div>
         </div>
       </div>
     </div>
@@ -666,49 +641,62 @@ router.get('/perfil/visual', async (req, res) => {
 });
 
 
+
+
 router.post('/vincular-discord', async (req, res) => {
   const { discord_id, nome_discord } = req.body;
 
   if (!discord_id || !nome_discord) {
-    return res.status(400).send('❌ Faltando informações.');
+    return res.status(400).json({ erro: 'Dados incompletos' });
+  }
+
+  // ⚠️ Não criar usuário aqui
+  // Apenas aceite os dados e confirme recebimento
+
+  return res.json({ sucesso: true });
+});
+
+
+
+// 🔗 Login com Twitch
+router.get('/auth/twitch/login', (req, res) => {
+  const client_id = process.env.CLIENT_ID;
+  const twitchURL = `https://id.twitch.tv/oauth2/authorize?client_id=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}&response_type=code&scope=user:read:email`;
+  res.redirect(twitchURL);
+});
+
+
+router.post('/vincular-discord', async (req, res) => {
+  const { discord_id, nome_discord } = req.body;
+
+  if (!discord_id || !nome_discord) {
+    return res.status(400).json({ erro: 'Dados incompletos' });
   }
 
   try {
-    const usuario = await Usuario.findOneAndUpdate(
-  {
-    $or: [
-      { discord_id },
-      { twitch_id: { $exists: false } } // opcional se quiser pegar docs "vazios"
-    ]
-  },
-  {
-    discord_id,
-    nome_discord
-  },
-  { upsert: true, new: true }
-);
+    // Procura um usuário com esse Discord ID
+    let usuario = await Usuario.findOne({ discord_id });
 
-    res.send(`✅ Discord vinculado como ${nome_discord}`);
+    // Se não encontrar, tenta usar a sessão se disponível
+    if (!usuario && req.session?.userId) {
+      usuario = await Usuario.findById(req.session.userId);
+    }
+
+    if (!usuario) {
+      return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    }
+
+    // Salva os dados do Discord
+    usuario.discord_id = discord_id;
+    usuario.nome_discord = nome_discord;
+    await usuario.save();
+
+    return res.json({ sucesso: true });
   } catch (err) {
     console.error('Erro ao vincular Discord:', err);
-    res.status(500).send('❌ Erro ao salvar no banco.');
+    return res.status(500).json({ erro: 'Erro interno do servidor' });
   }
-
-  
 });
-
-
-// Rota para login direto via botão do site
-router.get('/auth/twitch/login', (req, res) => {
-  const clientId = process.env.TWITCH_CLIENT_ID;
-  const redirectUri = 'http://localhost:3000/auth/twitch/callback';
-  const scope = 'user:read:email';
-
-  const authUrl = `https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}`;
-
-  res.redirect(authUrl);
-});
-
 
 
 
