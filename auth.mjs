@@ -33,10 +33,6 @@ const protegerPainel = (req, res, next) => {
 router.get('/vincular', (req, res) => {
   const { discord_id } = req.query;
 
-  if (!discord_id) {
-    return res.status(400).send('❌ Discord ID ausente na URL.');
-  }
-
   const redirectUri = 'http://localhost:3000/auth/twitch/callback';
   const clientId = process.env.CLIENT_ID;
   const scope = 'user:read:email channel:read:vips channel:manage:vips';
@@ -44,21 +40,20 @@ router.get('/vincular', (req, res) => {
   const authUrl = `https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&state=${discord_id}`;
   console.log('🔎 URL gerada:', authUrl);
   res.redirect(authUrl);
-
   
 });
 
 
 router.get('/auth/twitch/callback', async (req, res) => {
-  console.log('🚨 CALLBACK ATIVADA: /auth/twitch/callback');
   const code = req.query.code;
-  const discordId = req.query.state; // ← capturado da URL gerada no /vincular
+  const discordId = req.query.state; // capturado da URL gerada no /vincular
 
   if (!code) {
     return res.send('❌ Código de autorização ausente.');
   }
 
   try {
+    // 🔁 Troca o código por um access token
     const { data } = await axios.post('https://id.twitch.tv/oauth2/token', null, {
       params: {
         client_id: process.env.CLIENT_ID,
@@ -72,6 +67,7 @@ router.get('/auth/twitch/callback', async (req, res) => {
     const { access_token, refresh_token, scope } = data;
     const escopos = Array.isArray(scope) ? scope : scope?.split(' ') || [];
 
+    // 👤 Valida o token e recupera informações do usuário
     const valida = await axios.get('https://id.twitch.tv/oauth2/validate', {
       headers: {
         Authorization: `OAuth ${access_token}`
@@ -90,7 +86,7 @@ router.get('/auth/twitch/callback', async (req, res) => {
       console.log('📦 Token do canal principal salvo em Canal');
     }
 
-    // ✅ Atualiza o modelo Usuario
+    // ✅ Monta objeto de atualização do usuário
     const update = {
       twitch_id: user_id,
       nome_twitch: login,
@@ -99,25 +95,41 @@ router.get('/auth/twitch/callback', async (req, res) => {
       escopos
     };
 
-    // 👾 Se veio com state (discordId), salva também
+    // 👾 Se veio com Discord ID (state), vincula ao usuário
     if (discordId) {
+      const usuarioExistente = await Usuario.findOne({ discord_id: discordId });
       update.discord_id = discordId;
-      update.nome_discord = null; // você pode atualizar via bot mais tarde
+
+      if (usuarioExistente && usuarioExistente.nome_discord) {
+        update.nome_discord = usuarioExistente.nome_discord;
+      } else {
+        update.nome_discord = null;
+      }
+
       console.log(`🔗 Vinculando Discord ID ${discordId} à conta Twitch ${login}`);
     }
 
-    await Usuario.findOneAndUpdate(
+    // 🛠️ Cria ou atualiza o usuário no banco
+    const usuarioAtualizado = await Usuario.findOneAndUpdate(
       { twitch_id: user_id },
       update,
       { upsert: true, new: true }
     );
 
-    res.send('✅ Conta conectada com sucesso!');
+    // 💾 Salva informações na sessão
+    req.session.twitchUser = usuarioAtualizado.nome_twitch;
+    req.session.twitchId = usuarioAtualizado.twitch_id;
+    req.session.userId = usuarioAtualizado._id;
+    // ✅ Redireciona de volta à home
+    res.redirect('/');
+
   } catch (err) {
     console.error('❌ Erro no callback da Twitch:', err.response?.data || err.message);
     res.send('❌ Erro ao processar o login com a Twitch.');
   }
 });
+
+
 
 
 
@@ -651,6 +663,50 @@ router.get('/perfil/visual', async (req, res) => {
       </div>
     </div>
   `);
+});
+
+
+router.post('/vincular-discord', async (req, res) => {
+  const { discord_id, nome_discord } = req.body;
+
+  if (!discord_id || !nome_discord) {
+    return res.status(400).send('❌ Faltando informações.');
+  }
+
+  try {
+    const usuario = await Usuario.findOneAndUpdate(
+  {
+    $or: [
+      { discord_id },
+      { twitch_id: { $exists: false } } // opcional se quiser pegar docs "vazios"
+    ]
+  },
+  {
+    discord_id,
+    nome_discord
+  },
+  { upsert: true, new: true }
+);
+
+    res.send(`✅ Discord vinculado como ${nome_discord}`);
+  } catch (err) {
+    console.error('Erro ao vincular Discord:', err);
+    res.status(500).send('❌ Erro ao salvar no banco.');
+  }
+
+  
+});
+
+
+// Rota para login direto via botão do site
+router.get('/auth/twitch/login', (req, res) => {
+  const clientId = process.env.TWITCH_CLIENT_ID;
+  const redirectUri = 'http://localhost:3000/auth/twitch/callback';
+  const scope = 'user:read:email';
+
+  const authUrl = `https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}`;
+
+  res.redirect(authUrl);
 });
 
 

@@ -159,9 +159,11 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === 'vincular') {
-    
-      const usuario = await Usuario.findOne({ discord_id: interaction.user.id });
+if (interaction.commandName === 'vincular') {
+  const discordId = interaction.user.id;
+  const nomeDiscord = `${interaction.user.username}#${interaction.user.discriminator}`;
+
+  const usuario = await Usuario.findOne({ discord_id: discordId });
 
   if (usuario?.banido) {
     return interaction.reply({
@@ -169,13 +171,24 @@ client.on('interactionCreate', async interaction => {
       ephemeral: true
     });
   }
-    
-    const link = `http://localhost:3000/vincular?discord_id=${interaction.user.id}`;
-    await interaction.reply({
-      content: `🔗 Clique aqui para vincular sua conta da Twitch:\n${link}`,
-      ephemeral: true
+
+  // Atualiza nome_discord no backend
+  try {
+    await fetch('http://localhost:3000/vincular-discord', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ discord_id: discordId, nome_discord: nomeDiscord })
     });
-  } else if (interaction.commandName === 'vipstatus') {
+  } catch (err) {
+    console.error('Erro ao enviar nome_discord:', err.message);
+  }
+
+  const link = `http://localhost:3000/vincular?discord_id=${discordId}`;
+  await interaction.reply({
+    content: `🔗 Clique aqui para vincular sua conta da Twitch:\n${link}`,
+    ephemeral: true
+  });
+} else if (interaction.commandName === 'vipstatus') {
     await interaction.deferReply({ flags: 64 });
 
     const usuarios = await Usuario.find();

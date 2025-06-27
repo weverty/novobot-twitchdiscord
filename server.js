@@ -48,10 +48,13 @@ async function main() {
   app.use(authRoutes);
 
   // 🌐 Home
-  app.get('/', (req, res) => {
-    const twitchUser = req.session.twitchUser;
-    res.render('index', { twitchUser });
+app.get('/', (req, res) => {
+  res.render('index', {
+    twitchUser: req.session.twitchUser
   });
+});
+
+
 
   // 🛒 Loja
   app.get('/loja', async (req, res) => {
@@ -67,7 +70,7 @@ async function main() {
   });
 
 
-  app.get('/perfil', async (req, res) => {
+app.get('/perfil', async (req, res) => {
   if (!req.session.userId) {
     return res.redirect('/');
   }
@@ -83,9 +86,10 @@ async function main() {
     twitchId: usuario.twitch_id,
     pontos: usuario.pontos,
     email: usuario.email || 'Não disponível',
-    criadoEm: usuario.createdAt?.toLocaleDateString('pt-BR') || 'Data desconhecida'
+    criadoEm: usuario.createdAt?.toLocaleDateString('pt-BR') || 'Desconhecida'
   });
 });
+
 
 app.post('/resgatar', async (req, res) => {
   const { item, custo } = req.body;
@@ -125,6 +129,11 @@ app.post('/resgatar', async (req, res) => {
   });
 
 app.get('/auth/twitch/callback', async (req, res) => {
+  console.log('🚦 Entrou no callback da Twitch!');
+      // 🟢 Salva sessão
+    req.session.twitchUser = usuario.nome_twitch;
+    req.session.userId = usuario._id;
+
   const code = req.query.code;
 
   if (!code) {
@@ -198,10 +207,6 @@ app.get('/auth/twitch/callback', async (req, res) => {
       usuario.nome_twitch = displayName;
       await usuario.save();
     }
-
-    // 🟢 Salva sessão
-    req.session.twitchUser = usuario.nome_twitch;
-    req.session.userId = usuario._id;
 
     res.redirect('/');
   } catch (err) {
