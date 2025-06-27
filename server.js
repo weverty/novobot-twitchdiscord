@@ -18,7 +18,6 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
@@ -38,13 +37,12 @@ async function main() {
     resave: false,
     saveUninitialized: true
   }));
-
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use(express.static('public'));
-
   app.set('view engine', 'ejs');
-  app.set('views', './views');
+  app.set('views', path.join(__dirname, 'views'));
+  app.use(express.static(path.join(__dirname, 'public')));
   app.use(authRoutes);
 
   // 🌐 Página inicial
@@ -54,33 +52,32 @@ app.get('/', (req, res) => {
 
 
   // 🛒 Loja
-  app.get('/loja', async (req, res) => {
-    if (!req.session.userId) {
-      return res.render('loja', { twitchUser: null, saldo: 0 });
-    }
-
-    const user = await Usuario.findById(req.session.userId);
-    res.render('loja', {
-      twitchUser: user.nome_twitch,
-      saldo: user.pontos
-    });
+app.get('/loja', async (req, res) => {
+  const usuario = await Usuario.findById(req.session.userId);
+  res.render('loja', {
+    usuario,
+    twitchUser: req.session.twitchUser
   });
-
-  // 👤 Perfil
-  app.get('/perfil', async (req, res) => {
-    if (!req.session.userId) return res.redirect('/');
-    const usuario = await Usuario.findById(req.session.userId);
-    if (!usuario) return res.redirect('/');
-
-    res.render('perfil', {
-  usuario,
-  twitchUser: req.session.twitchUser,
-  twitchId: usuario.twitch_id,
-  pontos: usuario.pontos,
-  email: usuario.email,
-  criadoEm: formatarData(usuario.createdAt)
 });
+
+
+
+app.get('/perfil', async (req, res) => {
+  if (!req.session.userId) return res.redirect('/');
+
+  const usuario = await Usuario.findById(req.session.userId);
+  if (!usuario) return res.redirect('/');
+
+  res.render('perfil', {
+    twitchUser: req.session.twitchUser,
+    usuario, // 👈 ESSENCIAL!
+    twitchId: usuario.twitch_id,
+    pontos: usuario.pontos,
+    email: usuario.email,
+    criadoEm: formatarData(usuario.createdAt)
   });
+});
+
 
   // 🎁 Resgate
   app.post('/resgatar', async (req, res) => {

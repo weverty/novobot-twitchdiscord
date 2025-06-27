@@ -424,6 +424,10 @@ router.get('/remover/:id', protegerPainel, async (req, res) => {
 
 
 router.get('/loja', async (req, res) => {
+  const usuario = await Usuario.findById(req.session.userId);
+
+  if (!usuario) return res.redirect('/');
+
   const itens = [
     { nome: '🎵 Tocar música na live', preco: 100 },
     { nome: '🗣️ Mensagem destacada no bot', preco: 50 },
@@ -431,39 +435,13 @@ router.get('/loja', async (req, res) => {
     { nome: '👑 Cargo VIP no Discord (24h)', preco: 300 }
   ];
 
-  let html = `
-    <style>
-      body { font-family: sans-serif; background: #111; color: #fff; padding: 2rem; }
-      h1 { color: #1ea1f2; }
-      .item { background: #222; padding: 1rem; margin: 1rem 0; border-radius: 8px; }
-      .item h2 { margin: 0; font-size: 1.2em; }
-      .item form { margin-top: 10px; }
-      .item button { background: #1ea1f2; border: none; color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
-    </style>
-
-    <h1>🛒 Loja de Recompensas</h1>
-    <p>Bem-vindo, Weverty! Escolha um item para resgatar.</p>
-  `;
-
-  const twitchIdTeste = '170721291'; // seu ID confirmado
-
-  for (const item of itens) {
-    html += `
-      <div class="item">
-        <h2>${item.nome}</h2>
-        <p>💰 Custa: <strong>${item.preco}</strong> pontos</p>
-        <form method="POST" action="/resgatar">
-          <input type="hidden" name="twitch_id" value="${twitchIdTeste}">
-          <input type="hidden" name="item" value="${item.nome}">
-          <input type="hidden" name="preco" value="${item.preco}">
-          <button type="submit">Resgatar</button>
-        </form>
-      </div>
-    `;
-  }
-
-  res.send(html);
+  res.render('loja', {
+    usuario,
+    twitchUser: req.session.twitchUser,
+    itens
+  });
 });
+
 
 
 router.post('/resgatar', async (req, res) => {
@@ -626,20 +604,6 @@ router.get('/perfil', async (req, res) => {
         font-weight: bold;
       }
     </style>
-<div class="navbar">
-  <div class="nav-left">
-    <span class="logo">NovoBot</span>
-    <a href="/">Home</a>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/loja">Loja</a>
-    <a href="/perfil" class="ativo">Perfil</a>
-  </div>
-  <div class="nav-right">
-    <img src="/assets/discord.svg" alt="Discord" class="icon" />
-    <img src="/assets/twitch.svg" alt="Twitch" class="icon" />
-<span class="user"><%= usuario.nome_discord || usuario.nome_twitch || 'Usuário' %></span>
-    <a href="/logout" class="sair">Sair</a>
-  </div>
 </div>
     <div class="painel-container">
       <div class="perfil-card">
