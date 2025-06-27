@@ -7,12 +7,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { Client, GatewayIntentBits } from 'discord.js';
 import { renovarTokenTwitch } from './twitchService.js';
-import Usuario from './models/Usuario.js'; // IMPORTANTE
-import Resg from './models/Resg.js'; // use o nome correto do seu arquivo/modelo
-import Reward from './models/Reward.js'; // se estiver usando recompensas fixas, pode pular
+import Usuario from './models/Usuario.js';
+import Resg from './models/Resg.js';
+import Reward from './models/Reward.js';
 import axios from 'axios';
 import Canal from './models/Canal.js';
-import authRoutes from './auth.mjs'; // 👈 aqui vem suas rotas[]
+import authRoutes from './auth.mjs';
 
 dotenv.config();
 
@@ -47,14 +47,12 @@ async function main() {
   app.set('views', './views');
   app.use(authRoutes);
 
-  // 🌐 Home
-app.get('/', (req, res) => {
-  res.render('index', {
-    twitchUser: req.session.twitchUser
+  // 🌐 Página inicial
+  app.get('/', (req, res) => {
+    res.render('index', {
+      twitchUser: req.session.twitchUser
+    });
   });
-});
-
-
 
   // 🛒 Loja
   app.get('/loja', async (req, res) => {
@@ -69,154 +67,129 @@ app.get('/', (req, res) => {
     });
   });
 
+  // 👤 Perfil
+  app.get('/perfil', async (req, res) => {
+    if (!req.session.userId) {
+      return res.redirect('/');
+    }
 
-app.get('/perfil', async (req, res) => {
-  if (!req.session.userId) {
-    return res.redirect('/');
-  }
+    const usuario = await Usuario.findById(req.session.userId);
+    if (!usuario) return res.redirect('/');
 
-  const usuario = await Usuario.findById(req.session.userId);
-
-  if (!usuario) {
-    return res.redirect('/');
-  }
-
-  res.render('perfil', {
-    twitchUser: usuario.nome_twitch,
-    twitchId: usuario.twitch_id,
-    pontos: usuario.pontos,
-    email: usuario.email || 'Não disponível',
-    criadoEm: usuario.createdAt?.toLocaleDateString('pt-BR') || 'Desconhecida'
-  });
-});
-
-
-app.post('/resgatar', async (req, res) => {
-  const { item, custo } = req.body;
-
-  if (!req.session.userId) {
-    return res.status(401).json({ erro: 'Não autenticado' });
-  }
-
-  const usuario = await Usuario.findById(req.session.userId);
-
-  if (!usuario) {
-    return res.status(404).json({ erro: 'Usuário não encontrado' });
-  }
-
-  if (usuario.pontos < custo) {
-    return res.status(400).json({ erro: 'Pontos insuficientes' });
-  }
-
-  // Desconta os pontos
-  usuario.pontos -= custo;
-  await usuario.save();
-
-  // Salva no histórico
-  await Resg.create({
-    user: usuario._id,
-    reward: item, // se for texto; se for referência a Reward, adaptamos
+    res.render('perfil', {
+      twitchUser: usuario.nome_twitch,
+      twitchId: usuario.twitch_id,
+      pontos: usuario.pontos,
+      email: usuario.email || 'Não disponível',
+      criadoEm: usuario.createdAt?.toLocaleDateString('pt-BR') || 'Desconhecida'
+    });
   });
 
-  res.json({ sucesso: true, novaPontuacao: usuario.pontos });
-});
+  // 🎁 Resgatar recompensa
+  app.post('/resgatar', async (req, res) => {
+    const { item, custo } = req.body;
+    if (!req.session.userId) return res.status(401).json({ erro: 'Não autenticado' });
 
+    const usuario = await Usuario.findById(req.session.userId);
+    if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado' });
 
-  // 🔗 Login com Twitch
+    if (usuario.pontos < custo) {
+      return res.status(400).json({ erro: 'Pontos insuficientes' });
+    }
+
+    usuario.pontos -= custo;
+    await usuario.save();
+
+    await Resg.create({
+      user: usuario._id,
+      reward: item,
+    });
+
+    res.json({ sucesso: true, novaPontuacao: usuario.pontos });
+  });
+
+  // 🔗 Vincular com a Twitch (atalho)
   app.get('/vincular', (req, res) => {
     const twitchURL = `https://id.twitch.tv/oauth2/authorize?client_id=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}&response_type=code&scope=user:read:email`;
     res.redirect(twitchURL);
   });
 
-app.get('/auth/twitch/callback', async (req, res) => {
-  console.log('🚦 Entrou no callback da Twitch!');
-      // 🟢 Salva sessão
-    req.session.twitchUser = usuario.nome_twitch;
-    req.session.userId = usuario._id;
+  // 🎮 Callback do login com Twitch
+  app.get('/auth/twitch/callback', async (req, res) => {
+    console.log('🚦 Entrou no callback da Twitch!');
 
-  const code = req.query.code;
+    const code = req.query.code;
+    if (!code) return res.status(400).send('❌ Código de autorização ausente.');
 
-  if (!code) {
-    return res.status(400).send('❌ Código de autorização ausente.');
-  }
-
-  try {
-    // 🔁 Troca o code por um access_token
-    const tokenResponse = await fetch('https://id.twitch.tv/oauth2/token', {
-      method: 'POST',
-      body: new URLSearchParams({
-        client_id,
-        client_secret,
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri
-      }),
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
-
-    const tokenData = await tokenResponse.json();
-
-    const { access_token, refresh_token, expires_in } = tokenData;
-
-    if (!access_token) {
-      console.error('❌ Erro ao obter token:', tokenData);
-      return res.status(400).send('Erro ao obter token de acesso da Twitch.');
-    }
-
-    // 👤 Busca os dados do usuário na Twitch
-    const userRes = await axios.get('https://api.twitch.tv/helix/users', {
-      headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Client-ID': client_id
-      }
-    });
-
-
-    if (!userRes.data?.data?.length) {
-      return res.status(400).send('❌ Não foi possível obter informações da conta da Twitch.');
-    }
-
-    const twitchUser = userRes.data.data[0];
-    const twitchId = twitchUser.id;
-    const displayName = twitchUser.display_name;
-
-    if (twitchId === process.env.OWNER_TWITCH_ID) {
-  await Canal.findOneAndUpdate(
-    { twitch_id: twitchId },
-    {
-      access_token,
-      refresh_token,
-      expires_at: new Date(Date.now() + expires_in * 1000)
-    },
-    { upsert: true }
-  );
-  console.log('📦 Token do canal salvo com sucesso!');
-}
-
-
-    // 🔐 Cria ou atualiza o usuário no Mongo
-    let usuario = await Usuario.findOne({ twitch_id: twitchId });
-
-    if (!usuario) {
-      usuario = await Usuario.create({
-        twitch_id: twitchId,
-        nome_twitch: displayName,
-        pontos: 500
+    try {
+      const tokenResponse = await fetch('https://id.twitch.tv/oauth2/token', {
+        method: 'POST',
+        body: new URLSearchParams({
+          client_id,
+          client_secret,
+          code,
+          grant_type: 'authorization_code',
+          redirect_uri
+        }),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
-    } else {
-      usuario.nome_twitch = displayName;
-      await usuario.save();
+
+      const tokenData = await tokenResponse.json();
+      const { access_token, refresh_token, expires_in } = tokenData;
+
+      if (!access_token) {
+        console.error('❌ Erro ao obter token:', tokenData);
+        return res.status(400).send('Erro ao obter token de acesso da Twitch.');
+      }
+
+      const userRes = await axios.get('https://api.twitch.tv/helix/users', {
+        headers: {
+          'Authorization': `Bearer ${access_token}`,
+          'Client-ID': client_id
+        }
+      });
+
+      const twitchData = userRes.data?.data?.[0];
+      if (!twitchData) return res.status(400).send('❌ Não foi possível obter informações da conta da Twitch.');
+
+      const twitchId = twitchData.id;
+      const displayName = twitchData.display_name;
+
+      if (twitchId === process.env.OWNER_TWITCH_ID) {
+        await Canal.findOneAndUpdate(
+          { twitch_id: twitchId },
+          {
+            access_token,
+            refresh_token,
+            expires_at: new Date(Date.now() + expires_in * 1000)
+          },
+          { upsert: true }
+        );
+        console.log('📦 Token do canal salvo com sucesso!');
+      }
+
+      let usuario = await Usuario.findOne({ twitch_id: twitchId });
+      if (!usuario) {
+        usuario = await Usuario.create({
+          twitch_id: twitchId,
+          nome_twitch: displayName,
+          pontos: 500
+        });
+      } else {
+        usuario.nome_twitch = displayName;
+        await usuario.save();
+      }
+
+      req.session.twitchUser = usuario.nome_twitch;
+      req.session.userId = usuario._id;
+
+      res.redirect('/');
+    } catch (err) {
+      console.error('❌ Erro ao vincular com a Twitch:', err.response?.data || err.message);
+      res.status(500).send('Erro ao vincular conta Twitch.');
     }
+  });
 
-    res.redirect('/');
-  } catch (err) {
-    console.error('❌ Erro ao vincular com a Twitch:', err.response?.data || err.message);
-    res.status(500).send('Erro ao vincular conta Twitch.');
-  }
-});
-
-
-  // Outras rotas
   app.set('discordClient', client);
 
   app.listen(3000, () => {
