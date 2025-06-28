@@ -7,6 +7,9 @@ import Canal from './models/Canal.js';
 import auth from 'basic-auth';
 import { EmbedBuilder } from 'discord.js'; // ⬅️ no topo do arquivo (caso ainda não tenha)
 import Resgate from './models/Resgate.js';
+import formidableMiddleware from 'express-formidable';
+import fetch from 'node-fetch';
+import { protegerPainelTwitch } from './middlewares.mjs';
 
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
@@ -14,6 +17,7 @@ const redirect_uri = process.env.REDIRECT_URI;
 
 dotenv.config();
 const router = express.Router();
+router.use(formidableMiddleware());
 
 
 
@@ -31,6 +35,7 @@ const protegerPainel = (req, res, next) => {
 
   next();
 };
+
 
 
 
@@ -159,85 +164,49 @@ if (state && state !== 'undefined') {
 
 
 // 🚪 Logout
-router.get('/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.redirect('/');
-  });
+router.get('/logout', async (req, res) => {
+  let usuario = null;
+  let twitchUser = null;
+
+  if (req.session.userId) {
+    usuario = await Usuario.findById(req.session.userId);
+    twitchUser = usuario?.nome_twitch;
+  }
+
+  res.render('logout', { usuario, twitchUser });
 });
 
 
 
 
-// 🌐 Painel protegido com botão de remover
+
+
 router.get('/painel', protegerPainel, async (req, res) => {
   const usuarios = await Usuario.find();
   const guild = await req.app.get('discordClient').guilds.fetch(process.env.DISCORD_GUILD_ID);
 
-  const mensagem = req.query.removido
-    ? `<div style="background: #d4edda; color: #155724; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
-         ✅ Usuário removido com sucesso!
-       </div>`
-    : '';
-
-  let html = `
-    <style>
-      body { font-family: sans-serif; padding: 2rem; background: #f9f9f9; }
-      table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 0 10px #ddd; }
-      th, td { padding: 10px 14px; border-bottom: 1px solid #eee; }
-      th { background: #f0f0f0; text-align: left; }
-      tr.vip td { background-color: #e0ffe0; }
-    </style>
-    ${mensagem}
-    <h2>👥 Usuários vinculados</h2>
-    <table>
-      <tr>
-        <th>🎮 Twitch</th>
-        <th>🆔 Discord</th>
-        <th>Twitch ID</th>
-        <th>VIP?</th>
-        <th>Ações</th>
-      </tr>
-  `;
-
+  const vips = {};
   for (const u of usuarios) {
     try {
       const member = await guild.members.fetch(u.discord_id);
-      const temVip = member.roles.cache.has(process.env.DISCORD_ROLE_ID);
-      html += `<tr class="${temVip ? 'vip' : ''}">
-        <td>${u.nome_twitch || '<i>Desconhecido</i>'}</td>
-        <td><a href="https://discord.com/users/${u.discord_id}" target="_blank">${u.discord_id}</a></td>
-        <td>${u.twitch_id}</td>
-        <td>${temVip ? '✅ Sim' : '❌ Não'}</td>
-        <td>
-          ${
-  u.banido
-    ? `<span style="color: gray;" title="Usuário banido – não pode remover">🔒 Bloqueado</span>`
-    : `${
-  u.banido
-    ? `<span style="color: gray;" title="Usuário banido – não pode ser removido">🔒 Banido</span>`
-    : `<a href="/remover/${u.discord_id}" onclick="return confirm('Tem certeza que deseja remover este vínculo?')">🗑️ Remover</a>`
-}
-`
-}
-          &nbsp;|&nbsp;
-          ${
-            u.banido
-              ? `<form method="POST" action="/desbanir/${u._id}" style="display:inline;">
-                   <button onclick="return confirm('Desbanir este usuário?')" style="background: #28a745; color: white; border: none; padding: 4px 10px; border-radius: 4px;">Desbanir</button>
-                 </form>`
-              : `<form method="POST" action="/banir/${u._id}" style="display:inline;">
-                   <button onclick="return confirm('Banir este usuário?')" style="background: crimson; color: white; border: none; padding: 4px 10px; border-radius: 4px;">Banir</button>
-                 </form>`
-          }
-        </td>
-      </tr>`;
-    } catch (e) {
-      html += `<tr><td colspan="5">⚠️ Erro ao buscar membro ${u.discord_id}</td></tr>`;
+      vips[u.discord_id] = member.roles.cache.has(process.env.DISCORD_ROLE_ID);
+    } catch {
+      vips[u.discord_id] = false;
     }
   }
 
-  html += `</table>`;
-  res.send(html);
+  const usuario = await Usuario.findById(req.session.userId); // <- pega o dono logado
+  const twitchUser = usuario?.nome_twitch;
+
+  const mensagem = req.query.removido ? '✅ Usuário removido com sucesso!' : null;
+
+  res.render('painel', {
+    usuarios,
+    vips,
+    mensagem,
+    usuario,
+    twitchUser // 👈 isso resolve o erro!
+  });
 });
 
 
@@ -297,60 +266,6 @@ router.get('/remover/:discordId', protegerPainel, async (req, res) => {
 });
 
 
-router.post('/banir/:id', protegerPainel, async (req, res) => {
-  try {
-    const userId = req.params.id;
-    const usuario = await Usuario.findByIdAndUpdate(userId, { banido: true }, { new: true });
-
-    const canal = await Canal.findOne({ twitch_id: process.env.OWNER_TWITCH_ID });
-    const token = canal?.access_token;
-
-    let nomeTwitch = 'Não encontrado';
-
-    if (token && usuario.twitch_id) {
-      try {
-        const resTwitch = await axios.get('https://api.twitch.tv/helix/users', {
-          params: { id: usuario.twitch_id },
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Client-ID': process.env.CLIENT_ID
-          }
-        });
-
-        nomeTwitch = resTwitch.data.data[0]?.display_name || 'Desconhecido';
-      } catch (err) {
-        console.warn('⚠️ Erro ao buscar nome da Twitch:', err.message);
-      }
-    }
-
-    const guild = await req.app.get('discordClient').guilds.fetch(process.env.DISCORD_GUILD_ID);
-    const membro = await guild.members.fetch(usuario.discord_id).catch(() => null);
-
-    const nomeDiscord = membro?.user?.tag || 'Não encontrado';
-
-    const canalLog = await req.app.get('discordClient').channels.fetch(process.env.DISCORD_LOG_CHANNEL_ID);
-    if (canalLog?.isTextBased()) {
-      const embed = new EmbedBuilder()
-        .setTitle('🚫 Usuário Banido pelo Painel')
-        .setColor(0xff0000)
-        .addFields(
-          { name: '📌 Discord', value: `\`${usuario.discord_id}\` (${nomeDiscord})`, inline: false },
-          { name: '🎮 Twitch', value: `\`${usuario.twitch_id}\` (${nomeTwitch})`, inline: false },
-          { name: '📝 Motivo', value: 'Banido pelo site', inline: false }
-        )
-        .setTimestamp();
-
-      await canalLog.send({ embeds: [embed] });
-    }
-
-    res.redirect('/painel');
-  } catch (err) {
-    console.error('Erro ao banir usuário:', err);
-    res.status(500).send('Erro ao banir usuário.');
-  }
-});
-
-
 router.post('/desbanir/:id', protegerPainel, async (req, res) => {
   try {
     const userId = req.params.id;
@@ -404,6 +319,31 @@ router.post('/desbanir/:id', protegerPainel, async (req, res) => {
 });
 
 
+router.post('/banir/:id', protegerPainel, async (req, res) => {
+  console.log('🌀 BANIR iniciado');
+
+  try {
+    const userId = req.params.id;
+    console.log('🔸 ID recebido:', userId);
+
+    const usuario = await Usuario.findByIdAndUpdate(userId, { banido: true }, { new: true });
+    console.log('✅ Usuário atualizado no Mongo');
+
+    // Descomenta gradualmente os blocos abaixo e adicione logs entre eles
+    // Ex: buscar Twitch, buscar Discord, montar embed, enviar...
+
+    return res.redirect('/painel');
+  } catch (err) {
+    console.error('❌ Erro ao banir:', err);
+    return res.status(500).send('Erro ao banir');
+  }
+});
+
+
+
+
+
+
 router.get('/remover/:id', protegerPainel, async (req, res) => {
   const discordId = req.params.id;
 
@@ -445,7 +385,8 @@ router.get('/loja', async (req, res) => {
 
 
 router.post('/resgatar', async (req, res) => {
-  const { twitch_id, item, preco } = req.body;
+ const { twitch_id, item, preco } = req.fields;
+
 
   if (!twitch_id || !item || !preco) {
     return res.status(400).send('❌ Dados incompletos.');
@@ -467,6 +408,24 @@ router.post('/resgatar', async (req, res) => {
   await Resgate.create({ usuario_id: usuario._id, item, preco });
 
   res.send(`✅ Você resgatou: "${item}" por ${preco} pontos!`);
+  
+
+  const webhookURL = process.env.DISCORD_WEBHOOK_RESGATES;
+
+await fetch(webhookURL, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    embeds: [{
+      title: '🎁 Novo Resgate!',
+      description: `**${usuario.nome_twitch}** (ID: \`${usuario.twitch_id}\`) resgatou **${item}** por **${preco} pontos**.`,
+      color: 0x90ee90,
+      timestamp: new Date().toISOString(),
+      footer: { text: 'NovoBot • Loja de Recompensas' }
+    }]
+  })
+});
+
 });
 
 
@@ -535,93 +494,15 @@ router.get('/perfil', async (req, res) => {
     viewer: '#9ca3af'
   }[status];
 
-  const nomeDiscord = usuario.nome_discord || 'Não vinculado';
-  const discordId = usuario.discord_id || '-';
-
-  res.send(`
-    <style>
-      body {
-        margin: 0;
-        background: #0e0e10;
-        font-family: 'Segoe UI', sans-serif;
-      }
-
-      .painel-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-      }
-
-      .perfil-card {
-        background: #1c1c1f;
-        padding: 2rem;
-        border-radius: 1rem;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 1.5rem;
-        box-shadow: 0 0 20px #111;
-        width: 330px;
-      }
-
-      .avatar {
-        width: 100px;
-        height: 100px;
-        border-radius: 50%;
-        background: url('${avatarURL}') center/cover no-repeat;
-        border: 3px solid #ff416c;
-      }
-
-      .info {
-        background: #2b2b2f;
-        padding: 1rem;
-        border-radius: 1rem;
-        width: 100%;
-        color: #ccc;
-      }
-
-      .info div {
-        margin-bottom: 0.6rem;
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.95rem;
-        border-bottom: 1px solid #333;
-        padding-bottom: 0.4rem;
-      }
-
-      .info div:last-child {
-        border: none;
-        margin-bottom: 0;
-        padding-bottom: 0;
-      }
-
-      .label {
-        color: #777;
-      }
-
-      .valor {
-        font-weight: bold;
-      }
-    </style>
-</div>
-    <div class="painel-container">
-      <div class="perfil-card">
-        <div class="avatar"></div>
-
-        <div class="info">
-          <div><span class="label">Twitch:</span> <span class="valor">${usuario.nome_twitch || '-'}</span></div>
-          <div><span class="label">ID Twitch:</span> <span class="valor">${usuario.twitch_id}</span></div>
-          <div><span class="label">Pontos:</span> <span class="valor">${usuario.pontos || 0}</span></div>
-          <div><span class="label">Tempo assistido:</span> <span class="valor">${usuario.tempo_assistido || 0}h</span></div>
-          <div><span class="label">Status:</span> <span class="valor" style="color: ${statusCor}">${status}</span></div>
-          <div><span class="label">Discord:</span> <span class="valor">${nomeDiscord}</span></div>
-          <div><span class="label">ID Discord:</span> <span class="valor">${discordId}</span></div>
-        </div>
-      </div>
-    </div>
-  `);
+  res.render('perfil', {
+    usuario,
+    twitchUser: req.session.twitchUser,
+    avatarURL,
+    status,
+    statusCor
+  });
 });
+
 
 
 router.post('/vincular-discord', async (req, res) => {
