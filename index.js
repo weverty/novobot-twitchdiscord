@@ -32,12 +32,15 @@ app.use(async (req, res, next) => {
   next();
 });
 
+
 // 🌐 Rota Home com botão de login
 app.get('/', (req, res) => {
   const botaoLogin = `<a href="https://id.twitch.tv/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${process.env.REDIRECT_URI}&response_type=code&scope=channel:read:vips">Login com Twitch</a>`;
   res.render('index'); // agora carrega o layout com navbar
   res.send(botaoLogin);
 });
+
+
 
 // 🎮 Callback Twitch
 app.get('/auth/twitch/callback', async (req, res) => {

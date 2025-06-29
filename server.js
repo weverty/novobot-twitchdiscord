@@ -13,6 +13,7 @@ import Reward from './models/Reward.js';
 import axios from 'axios';
 import Canal from './models/Canal.js';
 import authRoutes from './auth.mjs';
+import ItemLoja from './models/ItemLoja.js';
 
 dotenv.config();
 
@@ -32,13 +33,15 @@ async function main() {
 
   const app = express();
 
+
+  app.use(express.urlencoded({ extended: true }));
+
   app.use(session({
     secret: 'novobot-super-secreto',
     resave: false,
     saveUninitialized: true
   }));
   app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
   app.use(express.static('public'));
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, 'views'));
@@ -127,13 +130,81 @@ app.get('/double', async (req, res) => {
 
 
 
-  // 🛒 Loja
 app.get('/loja', async (req, res) => {
   const usuario = await Usuario.findById(req.session.userId);
-  res.render('loja', {
-    usuario,
-    twitchUser: req.session.twitchUser
-  });
+  if (!usuario) return res.redirect('/');
+
+  const isOwner = usuario.twitch_id === process.env.OWNER_TWITCH_ID;
+  const itens = await ItemLoja.find().sort({ criadoEm: -1 });
+
+  console.log('🔐 isOwner?', isOwner);
+  
+res.render('loja', {
+  usuario,
+  twitchUser: req.session.twitchUser,
+  itens,
+  isOwner
+});
+
+});
+
+
+
+app.post('/loja/criar', async (req, res) => {
+  try {
+    console.log('📨 Recebi POST em /loja/criar');
+
+    // Verifica se corpo foi recebido
+    const { nome, preco } = req.body;
+    console.log('📦 Dados recebidos:', nome, preco);
+
+    if (!nome || !preco) {
+      console.warn('⚠️ Nome ou preço faltando');
+      return res.status(400).send('Campos obrigatórios ausentes.');
+    }
+
+    // Busca usuário pela sessão
+    const usuario = await Usuario.findById(req.session.userId);
+    if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
+      console.warn('⛔ Acesso negado ao criar item');
+      return res.status(403).send('Acesso negado');
+    }
+
+    // Cria item no banco
+    await ItemLoja.create({
+      nome: nome.trim(),
+      preco: parseInt(preco)
+    });
+
+    console.log('✅ Item criado com sucesso:', nome);
+    return res.redirect('/loja');
+
+  } catch (err) {
+    console.error('❌ Erro no /loja/criar:', err);
+    return res.status(500).send('Erro interno ao criar item.');
+  }
+});
+
+
+app.post('/api/loja/remover', async (req, res) => {
+  const { nome } = req.body;
+  const usuario = await Usuario.findById(req.session.userId);
+
+  if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
+    return res.status(403).json({ sucesso: false, erro: 'Acesso negado' });
+  }
+
+  try {
+    const resultado = await ItemLoja.deleteOne({ nome });
+    if (resultado.deletedCount === 0) {
+      return res.status(404).json({ sucesso: false, erro: 'Item não encontrado' });
+    }
+
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error('Erro ao remover item:', err);
+    res.status(500).json({ sucesso: false, erro: 'Erro interno no servidor' });
+  }
 });
 
 

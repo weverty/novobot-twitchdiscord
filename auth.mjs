@@ -10,6 +10,7 @@ import formidableMiddleware from 'express-formidable';
 import fetch from 'node-fetch';
 import { protegerPainelTwitch } from './middlewares.mjs';
 import { EmbedBuilder } from 'discord.js';
+import ItemLoja from './models/ItemLoja.js';
 
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
@@ -19,6 +20,7 @@ dotenv.config();
 const router = express.Router();
 router.use(formidableMiddleware());
 
+app.use(express.urlencoded({ extended: true }));
 
 
 
@@ -384,26 +386,6 @@ router.get('/remover/:id', protegerPainel, async (req, res) => {
 });
 
 
-router.get('/loja', async (req, res) => {
-  const usuario = await Usuario.findById(req.session.userId);
-
-  if (!usuario) return res.redirect('/');
-
-  const itens = [
-    { nome: '🎵 Tocar música na live', preco: 100 },
-    { nome: '🗣️ Mensagem destacada no bot', preco: 50 },
-    { nome: '🎉 Entrar no sorteio do mês', preco: 200 },
-    { nome: '👑 Cargo VIP no Discord (24h)', preco: 300 }
-  ];
-
-  res.render('loja', {
-    usuario,
-    twitchUser: req.session.twitchUser,
-    itens
-  });
-});
-
-
 
 router.post('/resgatar', async (req, res) => {
  const { twitch_id, item, preco } = req.fields;
@@ -448,6 +430,9 @@ await fetch(webhookURL, {
 });
 
 });
+
+
+
 
 
 router.get('/debug-client', (req, res) => {
