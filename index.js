@@ -1,16 +1,45 @@
 const express = require('express');
+const session = require('express-session');
 const axios = require('axios');
+const db = require('./db');
 require('dotenv').config();
 
 const app = express();
 const PORT = 3000;
 
-const db = require('./db');
+// 💾 Sessão deve vir logo no topo
+app.use(session({
+  secret: 'uma_chave_secreta_qualquer',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false }
+}));
 
-app.get('/', (req, res) => {
-  res.send(`<a href="https://id.twitch.tv/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${process.env.REDIRECT_URI}&response_type=code&scope=channel:read:vips">Login com Twitch</a>`);
+// 🌍 Torna o ID do dono acessível no EJS
+app.locals.OWNER_TWITCH_ID = process.env.OWNER_TWITCH_ID;
+
+// 🌐 Middleware global para deixar usuario acessível em todas as views
+app.use(async (req, res, next) => {
+  await db.read();
+
+  if (req.session.userId) {
+    const usuario = db.data.usuarios.find(u => u.twitch_id === req.session.userId);
+    res.locals.usuario = usuario || null;
+  } else {
+    res.locals.usuario = null;
+  }
+
+  next();
 });
 
+// 🌐 Rota Home com botão de login
+app.get('/', (req, res) => {
+  const botaoLogin = `<a href="https://id.twitch.tv/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${process.env.REDIRECT_URI}&response_type=code&scope=channel:read:vips">Login com Twitch</a>`;
+  res.render('index'); // agora carrega o layout com navbar
+  res.send(botaoLogin);
+});
+
+// 🎮 Callback Twitch
 app.get('/auth/twitch/callback', async (req, res) => {
   const code = req.query.code;
 
@@ -25,72 +54,37 @@ app.get('/auth/twitch/callback', async (req, res) => {
       }
     });
 
-const { access_token, refresh_token, expires_in } = response.data;
+    const { access_token, refresh_token, expires_in } = response.data;
 
-// Salvar no banco de dados
-await db.read();
-db.data.twitch_auth = {
-  access_token,
-  refresh_token,
-  expires_at: Date.now() + expires_in * 1000 // em milissegundos
-};
-await db.write();
+    // 📌 Simulação de ID do usuário (substitua depois por chamada real à Twitch)
+    const twitchUserId = 'simulado_123'; // você pode buscar isso via API: helix/users
 
+    await db.read();
+    const existente = db.data.usuarios.find(u => u.twitch_id === twitchUserId);
+    if (!existente) {
+      db.data.usuarios.push({
+        twitch_id: twitchUserId,
+        discord_id: null
+      });
+      await db.write();
+    }
 
-    res.send(`✅ Token recebido com sucesso!<br><br><code>${access_token}</code>`);
+    // ✅ Salva sessão
+    req.session.userId = twitchUserId;
+    console.log('🔐 Sessão salva:', twitchUserId);
+
+    res.send('✅ Login com Twitch bem-sucedido!');
   } catch (error) {
     console.error('Erro ao obter token:', error.response?.data || error.message);
-    res.status(500).send('❌ Erro ao obter o token de acesso.');
-  }
-  
-
-await db.read();
-db.data.usuarios.push({
-  discord_id: discordUser.id,
-  twitch_id: req.session.twitch_id
-});
-await db.write();
-
-});
-
-import fs from 'fs/promises';
-
-const raw = await fs.readFile('./vinculos.json');
-const { twitch_auth } = JSON.parse(raw);
-
-const accessToken = twitch_auth?.access_token;
-
-app.get('/vips', async (req, res) => {
-
-  try {
-    const userInfo = await axios.get('https://api.twitch.tv/helix/users', {
-      headers: {
-        'Client-ID': process.env.CLIENT_ID,
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-
-    const broadcasterId = userInfo.data.data[0].id;
-
-    const vipRes = await axios.get(`https://api.twitch.tv/helix/channels/vips?broadcaster_id=${broadcasterId}`, {
-      headers: {
-        'Client-ID': process.env.CLIENT_ID,
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-
-    res.json(vipRes.data);
-  } catch (error) {
-    console.error('Erro ao buscar VIPs:', error.response?.data || error.message);
-    res.status(500).send('❌ Erro ao buscar VIPs do canal.');
+    res.status(500).send('❌ Erro ao autenticar com a Twitch.');
   }
 });
 
-
+// 🔓 Login com Discord (opcional)
 app.get('/auth/discord', (req, res) => {
   const redirect = `https://discord.com/api/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.DISCORD_REDIRECT_URI)}&response_type=code&scope=identify`;
   res.redirect(redirect);
-})
+});
 
 app.get('/auth/discord/callback', async (req, res) => {
   const code = req.query.code;
@@ -118,31 +112,20 @@ app.get('/auth/discord/callback', async (req, res) => {
 
     const discordUser = userRes.data;
 
-    res.send(`✅ Conta Discord vinculada com sucesso!<br>ID: <code>${discordUser.id}</code><br>Usuário: ${discordUser.username}#${discordUser.discriminator}`);
+    await db.read();
+    const user = db.data.usuarios.find(u => u.twitch_id === req.session.userId);
+    if (user) {
+      user.discord_id = discordUser.id;
+      await db.write();
+    }
+
+    res.send(`✅ Discord vinculado com sucesso! (${discordUser.username}#${discordUser.discriminator})`);
   } catch (err) {
     console.error('Erro no callback do Discord:', err.response?.data || err.message);
     res.status(500).send('❌ Erro ao autenticar com Discord');
   }
-
-// Exemplo de uso:
-await db.read();
-db.data.usuarios.push({
-  discord_id: discordUser.id,
-  twitch_id: 'ID_TWITCH_DO_USUARIO' // ← Substitua pelo que armazenou antes
 });
-await db.write();
-
-});
-
-const session = require('express-session');
-
-app.use(session({
-  secret: 'uma_chave_secreta_qualquer',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false } // true se usar HTTPS
-}));
 
 app.listen(PORT, () => {
-  console.log(`Servidor rodando em http://localhost:${PORT}`);
+  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
 });

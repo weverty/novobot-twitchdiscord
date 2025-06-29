@@ -5,16 +5,16 @@ import dotenv from 'dotenv';
 import Usuario from './models/Usuario.js';
 import Canal from './models/Canal.js';
 import auth from 'basic-auth';
-import { EmbedBuilder } from 'discord.js'; // ⬅️ no topo do arquivo (caso ainda não tenha)
 import Resgate from './models/Resgate.js';
 import formidableMiddleware from 'express-formidable';
 import fetch from 'node-fetch';
 import { protegerPainelTwitch } from './middlewares.mjs';
+import { EmbedBuilder } from 'discord.js';
 
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
-
+const app = express();
 dotenv.config();
 const router = express.Router();
 router.use(formidableMiddleware());
@@ -56,6 +56,7 @@ router.get('/vincular', (req, res) => {
 
 // 🎮 Callback do login Twitch
 router.get('/auth/twitch/callback', async (req, res) => {
+  
   const code = req.query.code;
   const state = req.query.state;
 
@@ -151,6 +152,16 @@ if (state && state !== 'undefined') {
       );
     }
 
+
+    if (usuario.banido) {
+  req.session.userId = null; // limpa sessão
+  return res.render('banido', {
+    nome: usuario.nome_twitch || 'Usuário'
+  });
+}
+
+
+
     // Salvar na sessão
     req.session.twitchUser = usuario.nome_twitch;
     req.session.userId = usuario._id;
@@ -177,10 +188,6 @@ router.get('/logout', async (req, res) => {
 });
 
 
-
-
-
-
 router.get('/painel', protegerPainel, async (req, res) => {
   const usuarios = await Usuario.find();
   const guild = await req.app.get('discordClient').guilds.fetch(process.env.DISCORD_GUILD_ID);
@@ -195,18 +202,110 @@ router.get('/painel', protegerPainel, async (req, res) => {
     }
   }
 
-  const usuario = await Usuario.findById(req.session.userId); // <- pega o dono logado
+  const usuario = res.locals.usuario;
   const twitchUser = usuario?.nome_twitch;
+  const mensagem = req.query.ok ? 'Ação concluída com sucesso!' : null;
 
-  const mensagem = req.query.removido ? '✅ Usuário removido com sucesso!' : null;
+  res.render('painel', { usuarios, vips, usuario, twitchUser, mensagem });
+});
 
-  res.render('painel', {
-    usuarios,
-    vips,
-    mensagem,
-    usuario,
-    twitchUser // 👈 isso resolve o erro!
-  });
+
+router.get('/banir/:id', protegerPainel, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    // Atualiza e busca o usuário atualizado
+    const usuario = await Usuario.findByIdAndUpdate(userId, { banido: true }, { new: true });
+
+    console.log('✅ Usuário banido:', userId);
+
+    // Dados adicionais (Twitch e Discord)
+    const canal = await Canal.findOne({ twitch_id: process.env.OWNER_TWITCH_ID });
+    const token = canal?.access_token;
+    let nomeTwitch = 'Não encontrado';
+
+    if (token && usuario.twitch_id) {
+      try {
+        const resTwitch = await axios.get('https://api.twitch.tv/helix/users', {
+          params: { id: usuario.twitch_id },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Client-ID': process.env.CLIENT_ID
+          },
+          timeout: 5000
+        });
+        nomeTwitch = resTwitch.data.data[0]?.display_name || 'Desconhecido';
+      } catch (err) {
+        console.warn('⚠️ Erro ao buscar Twitch:', err.message);
+      }
+    }
+
+    const guild = await req.app.get('discordClient').guilds.fetch(process.env.DISCORD_GUILD_ID);
+    const membro = await guild.members.fetch(usuario.discord_id).catch(() => null);
+    const nomeDiscord = membro?.user?.tag || 'Desconhecido';
+
+    const canalLog = await req.app.get('discordClient').channels.fetch(process.env.DISCORD_LOG_CHANNEL_ID);
+    if (canalLog?.isTextBased()) {
+      const embed = new EmbedBuilder()
+        .setTitle('🚫 Usuário Banido pelo Painel')
+        .setColor(0xff0000)
+        .addFields(
+          { name: '📌 Discord', value: `\`${usuario.discord_id}\` (${nomeDiscord})`, inline: false },
+          { name: '🎮 Twitch', value: `\`${usuario.twitch_id}\` (${nomeTwitch})`, inline: false },
+          { name: '📝 Motivo', value: 'Banido pelo painel do site', inline: false }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Ação executada pelo painel admin' });
+
+      await canalLog.send({ embeds: [embed] });
+    }
+
+    // ✅ Agora sim: finaliza a requisição só após tudo
+    return res.redirect('/painel?ok=banido');
+
+  } catch (err) {
+    console.error('❌ Erro ao banir:', err);
+    return res.status(500).send('Erro ao banir');
+  }
+});
+
+
+router.get('/desbanir/:id', protegerPainel, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    // Atualiza status de banimento
+    const usuario = await Usuario.findByIdAndUpdate(userId, { banido: false }, { new: true });
+    console.log('✅ Usuário desbanido:', userId);
+
+    // Discord info
+    const canalLog = await req.app.get('discordClient').channels.fetch(process.env.DISCORD_LOG_CHANNEL_ID);
+    const guild = await req.app.get('discordClient').guilds.fetch(process.env.DISCORD_GUILD_ID);
+    const membro = await guild.members.fetch(usuario.discord_id).catch(() => null);
+    const nomeDiscord = membro?.user?.tag || 'Desconhecido';
+    const nomeTwitch = usuario.nome_twitch || 'Desconhecido';
+
+    // Envia embed
+    if (canalLog?.isTextBased()) {
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Usuário Desbanido pelo Painel')
+        .setColor(0x38a169)
+        .addFields(
+          { name: '📌 Discord', value: `\`${usuario.discord_id}\` (${nomeDiscord})`, inline: false },
+          { name: '🎮 Twitch', value: `\`${usuario.twitch_id}\` (${nomeTwitch})`, inline: false },
+          { name: '📝 Motivo', value: 'Desbanido pelo painel do site', inline: false }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Ação executada pelo painel admin' });
+
+      await canalLog.send({ embeds: [embed] });
+    }
+
+    return res.redirect('/painel?ok=desbanido');
+  } catch (err) {
+    console.error('❌ Erro ao desbanir:', err);
+    return res.status(500).send('Erro ao desbanir');
+  }
 });
 
 
@@ -264,84 +363,6 @@ router.get('/remover/:discordId', protegerPainel, async (req, res) => {
     res.status(500).send('⚠️ Erro interno ao remover o usuário.');
   }
 });
-
-
-router.post('/desbanir/:id', protegerPainel, async (req, res) => {
-  try {
-    const userId = req.params.id;
-    const usuario = await Usuario.findByIdAndUpdate(userId, { banido: false }, { new: true });
-
-    const canal = await Canal.findOne({ twitch_id: process.env.OWNER_TWITCH_ID });
-    const token = canal?.access_token;
-
-    let nomeTwitch = userId;
-
-    if (token && usuario.twitch_id) {
-      try {
-        const resTwitch = await axios.get('https://api.twitch.tv/helix/users', {
-          params: { id: usuario.twitch_id },
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Client-ID': process.env.CLIENT_ID
-          }
-        });
-
-        nomeTwitch = resTwitch.data.data[0]?.display_name || 'Desconhecido';
-      } catch (err) {
-        console.warn('⚠️ Erro ao buscar nome da Twitch:', err.message);
-      }
-    }
-
-    const guild = await req.app.get('discordClient').guilds.fetch(process.env.DISCORD_GUILD_ID);
-    const membro = await guild.members.fetch(usuario.discord_id).catch(() => null);
-    const nomeDiscord = membro?.user?.tag || 'Não encontrado';
-
-    const canalLog = await req.app.get('discordClient').channels.fetch(process.env.DISCORD_LOG_CHANNEL_ID);
-    if (canalLog?.isTextBased()) {
-      const embed = new EmbedBuilder()
-        .setTitle('✅ Usuário Desbanido pelo Painel')
-        .setColor(0x28a745)
-        .addFields(
-          { name: '📌 Discord', value: `\`${usuario.discord_id}\` (${nomeDiscord})`, inline: false },
-          { name: '🎮 Twitch', value: `\`${usuario.twitch_id}\` (${nomeTwitch})`, inline: false },
-          { name: '📝 Motivo', value: 'Desbanido pelo site', inline: false }
-        )
-        .setTimestamp();
-
-      await canalLog.send({ embeds: [embed] });
-    }
-
-    res.redirect('/painel');
-  } catch (err) {
-    console.error('Erro ao desbanir usuário:', err);
-    res.status(500).send('Erro ao desbanir usuário.');
-  }
-});
-
-
-router.post('/banir/:id', protegerPainel, async (req, res) => {
-  console.log('🌀 BANIR iniciado');
-
-  try {
-    const userId = req.params.id;
-    console.log('🔸 ID recebido:', userId);
-
-    const usuario = await Usuario.findByIdAndUpdate(userId, { banido: true }, { new: true });
-    console.log('✅ Usuário atualizado no Mongo');
-
-    // Descomenta gradualmente os blocos abaixo e adicione logs entre eles
-    // Ex: buscar Twitch, buscar Discord, montar embed, enviar...
-
-    return res.redirect('/painel');
-  } catch (err) {
-    console.error('❌ Erro ao banir:', err);
-    return res.status(500).send('Erro ao banir');
-  }
-});
-
-
-
-
 
 
 router.get('/remover/:id', protegerPainel, async (req, res) => {
@@ -502,7 +523,6 @@ router.get('/perfil', async (req, res) => {
     statusCor
   });
 });
-
 
 
 router.post('/vincular-discord', async (req, res) => {

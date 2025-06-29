@@ -51,6 +51,82 @@ app.get('/', (req, res) => {
 });
 
 
+
+const rodadaDouble = {
+  status: 'apostando', // ou 'girando'
+  tempoRestante: 15,
+  historico: [],
+  resultadoAtual: null
+};
+
+function gerarNumero(cor) {
+  if (cor === 'verde') return 0;
+  return Math.floor(Math.random() * 14) + 1;
+}
+
+
+function gerarNumeroEcor() {
+  const roleta = [];
+
+  for (let i = 0; i < 7; i++) roleta.push({ cor: 'vermelho', numero: gerarNumero('vermelho') });
+  for (let i = 0; i < 7; i++) roleta.push({ cor: 'preto', numero: gerarNumero('preto') });
+  roleta.push({ cor: 'verde', numero: 0 });
+
+  return roleta[Math.floor(Math.random() * roleta.length)];
+}
+
+
+setInterval(() => {
+  if (rodadaDouble.status === 'apostando') {
+    rodadaDouble.status = 'girando';
+
+    const resultado = gerarNumeroEcor();
+    rodadaDouble.resultadoAtual = resultado;
+    rodadaDouble.historico.unshift(resultado);
+    if (rodadaDouble.historico.length > 15) {
+      rodadaDouble.historico.pop();
+    }
+
+    setTimeout(() => {
+      rodadaDouble.status = 'apostando';
+      rodadaDouble.tempoRestante = 15;
+    }, 4000);
+  } else {
+    rodadaDouble.tempoRestante--;
+  }
+}, 1000);
+
+
+app.get('/api/double', (req, res) => {
+  res.json({
+    status: rodadaDouble.status,
+    tempo: rodadaDouble.tempoRestante,
+    resultado: rodadaDouble.resultadoAtual,
+    historico: rodadaDouble.historico
+  });
+});
+
+
+
+app.get('/api/double', (req, res) => {
+  res.json({
+    status: rodadaDouble.status,
+    tempo: rodadaDouble.tempoRestante,
+    resultado: rodadaDouble.resultadoAtual,
+    historico: rodadaDouble.historico
+  });
+});
+
+
+app.get('/double', async (req, res) => {
+  res.render('double', {
+    usuario: res.locals.usuario,
+    ocultarVincular: true
+  });
+});
+
+
+
   // 🛒 Loja
 app.get('/loja', async (req, res) => {
   const usuario = await Usuario.findById(req.session.userId);
@@ -79,8 +155,9 @@ app.get('/perfil', async (req, res) => {
 });
 
 
+
   // 🎁 Resgate
-  app.post('/resgatar', async (req, res) => {
+app.post('/resgatar', async (req, res) => {
     const { item, custo } = req.body;
     if (!req.session.userId) return res.status(401).json({ erro: 'Não autenticado' });
 
@@ -99,13 +176,14 @@ app.get('/perfil', async (req, res) => {
     });
 
     res.json({ sucesso: true, novaPontuacao: usuario.pontos });
-  });
+});
+
 
   // 🔗 Início da autenticação Twitch
-  app.get('/vincular', (req, res) => {
+app.get('/vincular', (req, res) => {
     const twitchURL = `https://id.twitch.tv/oauth2/authorize?client_id=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}&response_type=code&scope=user:read:email`;
     res.redirect(twitchURL);
-  });
+});
 
   // 🎮 Callback Twitch
   app.get('/auth/twitch/callback', async (req, res) => {
