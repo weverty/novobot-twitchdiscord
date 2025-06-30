@@ -18,6 +18,7 @@ import axios from 'axios';
 import createDB from './db.js';
 import { getValidTwitchToken } from './twitch.js';
 import Usuario from './models/Usuario.js'; // ✅ IMPORTANTE
+import ItemLoja from './models/ItemLoja.js';
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
@@ -139,7 +140,19 @@ client.once('ready', async () => {
       .setDescription('Vincule sua conta da Twitch ao seu Discord.'),
     new SlashCommandBuilder()
       .setName('vipstatus')
-      .setDescription('Mostra quem está vinculado e se é VIP no servidor.')
+      .setDescription('Mostra quem está vinculado e se é VIP no servidor.'),
+    new SlashCommandBuilder()
+  .setName('criarloja')
+  .setDescription('Cria um item na loja com nome e preço')
+  .addStringOption(opt =>
+    opt.setName('nome')
+       .setDescription('Nome do item')
+       .setRequired(true))
+  .addIntegerOption(opt =>
+    opt.setName('preco')
+       .setDescription('Preço em pontos')
+       .setRequired(true)),
+
   ].map(cmd => cmd.toJSON());
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -249,7 +262,23 @@ const link = `http://localhost:3000/auth/twitch/login?discord_id=${discordId}&no
     });
   } else if (interaction.commandName === 'ping') {
   await interaction.reply('🏓 Pong!');
+} else if (interaction.commandName === 'criarloja') {
+  const nome = interaction.options.getString('nome');
+  const preco = interaction.options.getInteger('preco');
+
+  if (interaction.user.id !== process.env.OWNER_DISCORD_ID) {
+    return interaction.reply({ content: '⛔ Apenas o dono pode usar este comando.', ephemeral: true });
+  }
+
+  try {
+    await ItemLoja.create({ nome: nome.trim(), preco });
+    await interaction.reply(`✅ Item **${nome}** criado por ${preco} pontos!`);
+  } catch (err) {
+    console.error('❌ Erro ao criar item:', err.message);
+    await interaction.reply({ content: 'Erro ao criar item na loja.', ephemeral: true });
+  }
 }
+ 
 
 });
 

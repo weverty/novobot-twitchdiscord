@@ -7,6 +7,8 @@ require('dotenv').config();
 const app = express();
 const PORT = 3000;
 
+console.log('🧭 Entrou no index.js');
+
 // 💾 Sessão deve vir logo no topo
 app.use(session({
   secret: 'uma_chave_secreta_qualquer',
@@ -14,6 +16,8 @@ app.use(session({
   saveUninitialized: true,
   cookie: { secure: false }
 }));
+
+app.use(express.urlencoded({ extended: true }));
 
 // 🌍 Torna o ID do dono acessível no EJS
 app.locals.OWNER_TWITCH_ID = process.env.OWNER_TWITCH_ID;
@@ -39,7 +43,6 @@ app.get('/', (req, res) => {
   res.render('index'); // agora carrega o layout com navbar
   res.send(botaoLogin);
 });
-
 
 
 // 🎮 Callback Twitch
@@ -128,6 +131,8 @@ app.get('/auth/discord/callback', async (req, res) => {
     res.status(500).send('❌ Erro ao autenticar com Discord');
   }
 });
+
+
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);

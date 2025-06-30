@@ -41,6 +41,8 @@ const protegerPainel = (req, res, next) => {
 
 
 
+
+
 // 🔗 Início da vinculação com Discord ID
 router.get('/vincular', (req, res) => {
   const { discord_id } = req.query;
@@ -386,7 +388,6 @@ router.get('/remover/:id', protegerPainel, async (req, res) => {
 });
 
 
-
 router.post('/resgatar', async (req, res) => {
  const { twitch_id, item, preco } = req.fields;
 
@@ -431,8 +432,60 @@ await fetch(webhookURL, {
 
 });
 
+router.post('/loja/criar', async (req, res) => {
+  const { nome, preco, qtd } = req.body;
+
+  if (!nome || !preco || !qtd) {
+    return res.status(400).send('❌ Campos obrigatórios ausentes');
+  }
+
+  const usuario = await Usuario.findById(req.session.userId);
+
+  if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
+    return res.status(403).send('⛔ Acesso negado');
+  }
+
+  await ItemLoja.create({
+    nome: nome.trim(),
+    preco: parseInt(preco),
+    quantidade: parseInt(qtd)
+  });
+
+  res.redirect('/loja');
+});
 
 
+router.get('/loja', async (req, res) => {
+  const usuario = await Usuario.findById(req.session.userId);
+  if (!usuario) return res.redirect('/');
+
+  const isOwner = usuario.twitch_id === process.env.OWNER_TWITCH_ID;
+  const itens = await ItemLoja.find().sort({ criadoEm: -1 });
+
+  res.render('loja', {
+    usuario,
+    twitchUser: req.session.twitchUser,
+    itens,
+    isOwner
+  });
+});
+
+
+router.post('/api/loja/remover', async (req, res) => {
+  const { nome } = req.body;
+  const usuario = await Usuario.findById(req.session.userId);
+
+  if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
+    return res.status(403).json({ sucesso: false, erro: 'Acesso negado' });
+  }
+
+  const resultado = await ItemLoja.deleteOne({ nome });
+  if (resultado.deletedCount === 0) {
+    return res.status(404).json({ sucesso: false, erro: 'Item não encontrado' });
+  }
+
+  res.json({ sucesso: true });
+});
 
 
 router.get('/debug-client', (req, res) => {
@@ -510,21 +563,6 @@ router.get('/perfil', async (req, res) => {
 });
 
 
-router.post('/vincular-discord', async (req, res) => {
-  const { discord_id, nome_discord } = req.body;
-
-  if (!discord_id || !nome_discord) {
-    return res.status(400).json({ erro: 'Dados incompletos' });
-  }
-
-  // ⚠️ Não criar usuário aqui
-  // Apenas aceite os dados e confirme recebimento
-
-  return res.json({ sucesso: true });
-});
-
-
-
 // 🔗 Login com Twitch
 router.get('/auth/twitch/login', (req, res) => {
   const { discord_id, nome_discord } = req.query;
@@ -548,9 +586,6 @@ router.get('/auth/twitch/login', (req, res) => {
   console.log('🔎 URL gerada:', authUrl);
   res.redirect(authUrl);
 });
-
-
-
 
 
 router.post('/vincular-discord', async (req, res) => {

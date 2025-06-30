@@ -23,6 +23,10 @@ const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
 
+console.log('🛠️ Entrou no server.js');
+
+
+
 async function main() {
   await mongoose.connect(process.env.MONGO_URI);
   console.log('🔌 Conectado ao MongoDB');
@@ -34,7 +38,6 @@ async function main() {
   const app = express();
 
 
-  app.use(express.urlencoded({ extended: true }));
 
   app.use(session({
     secret: 'novobot-super-secreto',
@@ -42,6 +45,7 @@ async function main() {
     saveUninitialized: true
   }));
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
   app.use(express.static('public'));
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, 'views'));
@@ -100,16 +104,6 @@ setInterval(() => {
 }, 1000);
 
 
-app.get('/api/double', (req, res) => {
-  res.json({
-    status: rodadaDouble.status,
-    tempo: rodadaDouble.tempoRestante,
-    resultado: rodadaDouble.resultadoAtual,
-    historico: rodadaDouble.historico
-  });
-});
-
-
 
 app.get('/api/double', (req, res) => {
   res.json({
@@ -119,6 +113,8 @@ app.get('/api/double', (req, res) => {
     historico: rodadaDouble.historico
   });
 });
+
+
 
 
 app.get('/double', async (req, res) => {
@@ -128,85 +124,12 @@ app.get('/double', async (req, res) => {
   });
 });
 
-
-
-app.get('/loja', async (req, res) => {
-  const usuario = await Usuario.findById(req.session.userId);
-  if (!usuario) return res.redirect('/');
-
-  const isOwner = usuario.twitch_id === process.env.OWNER_TWITCH_ID;
-  const itens = await ItemLoja.find().sort({ criadoEm: -1 });
-
-  console.log('🔐 isOwner?', isOwner);
-  
-res.render('loja', {
-  usuario,
-  twitchUser: req.session.twitchUser,
-  itens,
-  isOwner
-});
-
-});
-
-
-
-app.post('/loja/criar', async (req, res) => {
-  try {
-    console.log('📨 Recebi POST em /loja/criar');
-
-    // Verifica se corpo foi recebido
-    const { nome, preco } = req.body;
-    console.log('📦 Dados recebidos:', nome, preco);
-
-    if (!nome || !preco) {
-      console.warn('⚠️ Nome ou preço faltando');
-      return res.status(400).send('Campos obrigatórios ausentes.');
-    }
-
-    // Busca usuário pela sessão
-    const usuario = await Usuario.findById(req.session.userId);
-    if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
-      console.warn('⛔ Acesso negado ao criar item');
-      return res.status(403).send('Acesso negado');
-    }
-
-    // Cria item no banco
-    await ItemLoja.create({
-      nome: nome.trim(),
-      preco: parseInt(preco)
-    });
-
-    console.log('✅ Item criado com sucesso:', nome);
-    return res.redirect('/loja');
-
-  } catch (err) {
-    console.error('❌ Erro no /loja/criar:', err);
-    return res.status(500).send('Erro interno ao criar item.');
+app.use((req, res, next) => {
+  if (req.method === 'POST') {
+    console.log('🧪 Body bruto (req.body):', req.body);
   }
+  next();
 });
-
-
-app.post('/api/loja/remover', async (req, res) => {
-  const { nome } = req.body;
-  const usuario = await Usuario.findById(req.session.userId);
-
-  if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
-    return res.status(403).json({ sucesso: false, erro: 'Acesso negado' });
-  }
-
-  try {
-    const resultado = await ItemLoja.deleteOne({ nome });
-    if (resultado.deletedCount === 0) {
-      return res.status(404).json({ sucesso: false, erro: 'Item não encontrado' });
-    }
-
-    res.json({ sucesso: true });
-  } catch (err) {
-    console.error('Erro ao remover item:', err);
-    res.status(500).json({ sucesso: false, erro: 'Erro interno no servidor' });
-  }
-});
-
 
 
 app.get('/perfil', async (req, res) => {
@@ -257,7 +180,7 @@ app.get('/vincular', (req, res) => {
 });
 
   // 🎮 Callback Twitch
-  app.get('/auth/twitch/callback', async (req, res) => {
+app.get('/auth/twitch/callback', async (req, res) => {
     console.log('🚦 Callback da Twitch');
     const code = req.query.code;
     if (!code) return res.status(400).send('❌ Código de autorização ausente.');
@@ -330,9 +253,9 @@ app.get('/vincular', (req, res) => {
       console.error('❌ Erro ao vincular com a Twitch:', err.response?.data || err.message);
       res.status(500).send('Erro ao vincular conta Twitch.');
     }
-  });
+});
 
-  app.set('discordClient', client);
+app.set('discordClient', client);
 
   app.listen(3000, () => {
     console.log('🚀 Servidor rodando em http://localhost:3000');
