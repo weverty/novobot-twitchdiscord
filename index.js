@@ -92,6 +92,8 @@ app.get('/auth/discord', (req, res) => {
   res.redirect(redirect);
 });
 
+
+
 app.get('/auth/discord/callback', async (req, res) => {
   const code = req.query.code;
 

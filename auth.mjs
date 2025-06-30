@@ -10,7 +10,6 @@ import formidableMiddleware from 'express-formidable';
 import fetch from 'node-fetch';
 import { protegerPainelTwitch } from './middlewares.mjs';
 import { EmbedBuilder } from 'discord.js';
-import ItemLoja from './models/ItemLoja.js';
 
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
@@ -37,10 +36,6 @@ const protegerPainel = (req, res, next) => {
 
   next();
 };
-
-
-
-
 
 
 // 🔗 Início da vinculação com Discord ID
@@ -432,60 +427,6 @@ await fetch(webhookURL, {
 
 });
 
-router.post('/loja/criar', async (req, res) => {
-  const { nome, preco, qtd } = req.body;
-
-  if (!nome || !preco || !qtd) {
-    return res.status(400).send('❌ Campos obrigatórios ausentes');
-  }
-
-  const usuario = await Usuario.findById(req.session.userId);
-
-  if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
-    return res.status(403).send('⛔ Acesso negado');
-  }
-
-  await ItemLoja.create({
-    nome: nome.trim(),
-    preco: parseInt(preco),
-    quantidade: parseInt(qtd)
-  });
-
-  res.redirect('/loja');
-});
-
-
-router.get('/loja', async (req, res) => {
-  const usuario = await Usuario.findById(req.session.userId);
-  if (!usuario) return res.redirect('/');
-
-  const isOwner = usuario.twitch_id === process.env.OWNER_TWITCH_ID;
-  const itens = await ItemLoja.find().sort({ criadoEm: -1 });
-
-  res.render('loja', {
-    usuario,
-    twitchUser: req.session.twitchUser,
-    itens,
-    isOwner
-  });
-});
-
-
-router.post('/api/loja/remover', async (req, res) => {
-  const { nome } = req.body;
-  const usuario = await Usuario.findById(req.session.userId);
-
-  if (!usuario || usuario.twitch_id !== process.env.OWNER_TWITCH_ID) {
-    return res.status(403).json({ sucesso: false, erro: 'Acesso negado' });
-  }
-
-  const resultado = await ItemLoja.deleteOne({ nome });
-  if (resultado.deletedCount === 0) {
-    return res.status(404).json({ sucesso: false, erro: 'Item não encontrado' });
-  }
-
-  res.json({ sucesso: true });
-});
 
 
 router.get('/debug-client', (req, res) => {

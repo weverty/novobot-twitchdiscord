@@ -143,15 +143,23 @@ client.once('ready', async () => {
       .setDescription('Mostra quem está vinculado e se é VIP no servidor.'),
     new SlashCommandBuilder()
   .setName('criarloja')
-  .setDescription('Cria um item na loja com nome e preço')
-  .addStringOption(opt =>
-    opt.setName('nome')
-       .setDescription('Nome do item')
-       .setRequired(true))
-  .addIntegerOption(opt =>
-    opt.setName('preco')
-       .setDescription('Preço em pontos')
-       .setRequired(true)),
+  .setDescription('Cria um novo item na loja')
+  .addStringOption(option =>
+    option.setName('nome')
+      .setDescription('Nome do item')
+      .setRequired(true))
+  .addIntegerOption(option =>
+    option.setName('preco')
+      .setDescription('Preço do item')
+      .setRequired(true))
+  .addIntegerOption(option =>
+    option.setName('quantidade')
+      .setDescription('Quantidade disponível')
+      .setRequired(true))
+      .addStringOption(option =>
+  option.setName('descricao')
+    .setDescription('Descrição do item')
+    .setRequired(false))
 
   ].map(cmd => cmd.toJSON());
 
@@ -262,17 +270,29 @@ const link = `http://localhost:3000/auth/twitch/login?discord_id=${discordId}&no
     });
   } else if (interaction.commandName === 'ping') {
   await interaction.reply('🏓 Pong!');
+
 } else if (interaction.commandName === 'criarloja') {
   const nome = interaction.options.getString('nome');
   const preco = interaction.options.getInteger('preco');
+  const quantidade = interaction.options.getInteger('quantidade');
+  const descricao = interaction.options.getString('descricao'); // 🆕 nova opção
 
   if (interaction.user.id !== process.env.OWNER_DISCORD_ID) {
     return interaction.reply({ content: '⛔ Apenas o dono pode usar este comando.', ephemeral: true });
   }
 
   try {
-    await ItemLoja.create({ nome: nome.trim(), preco });
-    await interaction.reply(`✅ Item **${nome}** criado por ${preco} pontos!`);
+    await ItemLoja.create({
+      nome: nome.trim(),
+      preco,
+      quantidade,
+      descricao: descricao?.trim() ?? ''
+    });
+
+    await interaction.reply(
+      `✅ Item **${nome}** criado com sucesso!\n` +
+      `💰 Preço: ${preco} | 📦 Estoque: ${quantidade}\n📝 Descrição: ${descricao || 'Nenhuma'}`
+    );
   } catch (err) {
     console.error('❌ Erro ao criar item:', err.message);
     await interaction.reply({ content: 'Erro ao criar item na loja.', ephemeral: true });
